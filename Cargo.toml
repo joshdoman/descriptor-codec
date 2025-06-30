@@ -1,0 +1,25 @@
+[package]
+name = "descriptor-codec"
+version = "0.1.0"
+description = "Encrypt Bitcoin wallet descriptors such that only authorized spenders can decrypt"
+keywords = [ "crypto", "bitcoin", "descriptor", "miniscript", "encrypt" ]
+authors = ["Joshua Doman <joshsdoman@gmail.com>"]
+license = "CC0-1.0"
+homepage = "https://github.com/joshdoman/descriptor-encrypt"
+repository = "https://github.com/joshdoman/descriptor-encrypt"
+edition = "2024"
+readme = "README.md"
+rust-version = "1.85.0"
+
+[features]
+default = ["std"]
+std = ["bitcoin/std"]
+compiler = []
+trace = []
+
+[dependencies]
+anyhow = "1.0.98"
+bitcoin = "0.32.5"
+miniscript = "12.3.2"
+clap = { version = "4.4", features = ["derive"] }
+hex = "0.4.3"
