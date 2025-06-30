@@ -44,12 +44,13 @@ pub enum Tag {
     XOnly = 0x28,
     XPub = 0x29,
     MultiXPub = 0x2A,
-    SinglePriv = 0x2B,
-    XPriv = 0x2C,
-    MultiXPriv = 0x2D,
-    NoWildcard = 0x2E,
-    UnhardenedWildcard = 0x2F,
-    HardenedWildcard = 0x30,
+    UncompressedSinglePriv = 0x2B,
+    CompressedSinglePriv = 0x2C,
+    XPriv = 0x2D,
+    MultiXPriv = 0x2E,
+    NoWildcard = 0x2F,
+    UnhardenedWildcard = 0x30,
+    HardenedWildcard = 0x31,
     Unrecognized,
 }
 
@@ -61,7 +62,7 @@ impl Tag {
     #[allow(unsafe_code)]
     pub fn from(value: u8) -> Self {
         match value {
-            0x00..=0x30 => unsafe { std::mem::transmute::<u8, Tag>(value) },
+            0x00..=0x31 => unsafe { std::mem::transmute::<u8, Tag>(value) },
             _ => Tag::Unrecognized,
         }
     }
@@ -116,12 +117,13 @@ mod tests {
         assert_eq!(Tag::XOnly.value(), 0x28);
         assert_eq!(Tag::XPub.value(), 0x29);
         assert_eq!(Tag::MultiXPub.value(), 0x2A);
-        assert_eq!(Tag::SinglePriv.value(), 0x2B);
-        assert_eq!(Tag::XPriv.value(), 0x2C);
-        assert_eq!(Tag::MultiXPriv.value(), 0x2D);
-        assert_eq!(Tag::NoWildcard.value(), 0x2E);
-        assert_eq!(Tag::UnhardenedWildcard.value(), 0x2F);
-        assert_eq!(Tag::HardenedWildcard.value(), 0x30);
+        assert_eq!(Tag::UncompressedSinglePriv.value(), 0x2B);
+        assert_eq!(Tag::CompressedSinglePriv.value(), 0x2C);
+        assert_eq!(Tag::XPriv.value(), 0x2D);
+        assert_eq!(Tag::MultiXPriv.value(), 0x2E);
+        assert_eq!(Tag::NoWildcard.value(), 0x2F);
+        assert_eq!(Tag::UnhardenedWildcard.value(), 0x30);
+        assert_eq!(Tag::HardenedWildcard.value(), 0x31);
     }
 
     #[test]
@@ -169,17 +171,18 @@ mod tests {
         assert_eq!(Tag::XOnly, Tag::from(0x28));
         assert_eq!(Tag::XPub, Tag::from(0x29));
         assert_eq!(Tag::MultiXPub, Tag::from(0x2A));
-        assert_eq!(Tag::SinglePriv, Tag::from(0x2B));
-        assert_eq!(Tag::XPriv, Tag::from(0x2C));
-        assert_eq!(Tag::MultiXPriv, Tag::from(0x2D));
-        assert_eq!(Tag::NoWildcard, Tag::from(0x2E));
-        assert_eq!(Tag::UnhardenedWildcard, Tag::from(0x2F));
-        assert_eq!(Tag::HardenedWildcard, Tag::from(0x30));
+        assert_eq!(Tag::UncompressedSinglePriv, Tag::from(0x2B));
+        assert_eq!(Tag::CompressedSinglePriv, Tag::from(0x2C));
+        assert_eq!(Tag::XPriv, Tag::from(0x2D));
+        assert_eq!(Tag::MultiXPriv, Tag::from(0x2E));
+        assert_eq!(Tag::NoWildcard, Tag::from(0x2F));
+        assert_eq!(Tag::UnhardenedWildcard, Tag::from(0x30));
+        assert_eq!(Tag::HardenedWildcard, Tag::from(0x31));
     }
 
     #[test]
     fn test_unrecognized() {
-        for i in 0x31..=0xFF {
+        for i in 0x32..=0xFF {
             assert_eq!(Tag::Unrecognized, Tag::from(i));
         }
     }

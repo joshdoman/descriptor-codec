@@ -6,7 +6,7 @@ use super::tag::Tag;
 use super::varint;
 
 use bitcoin::{
-    bip32::{ChildNumber, DerivationPath, Xpub, Xpriv},
+    bip32::{ChildNumber, DerivationPath, Xpriv, Xpub},
     hashes::Hash,
 };
 use miniscript::{
@@ -340,7 +340,14 @@ impl EncodeTemplate for DescriptorSecretKey {
         let (tag, origin) = match self.clone() {
             DescriptorSecretKey::XPrv(xprv) => (Tag::XPriv, xprv.origin),
             DescriptorSecretKey::MultiXPrv(xprv) => (Tag::MultiXPriv, xprv.origin),
-            DescriptorSecretKey::Single(single) => (Tag::SinglePriv, single.origin)
+            DescriptorSecretKey::Single(single) => {
+                let tag = if single.key.compressed {
+                    Tag::CompressedSinglePriv
+                } else {
+                    Tag::UncompressedSinglePriv
+                };
+                (tag, single.origin)
+            }
         };
 
         template.push(tag.value());
@@ -466,11 +473,14 @@ mod tests {
     use super::*;
     use crate::dummy;
     use bitcoin::{
-        XOnlyPublicKey,
+        NetworkKind, XOnlyPublicKey,
         bip32::{DerivationPath, Fingerprint},
-        key::PublicKey,
+        key::{PrivateKey, PublicKey},
     };
-    use miniscript::{BareCtx, Legacy, Miniscript, Segwitv0, Tap, descriptor::SinglePub};
+    use miniscript::{
+        BareCtx, Legacy, Miniscript, Segwitv0, Tap,
+        descriptor::{SinglePriv, SinglePub},
+    };
     use std::str::FromStr;
 
     // Helper to create a DerivationPath from a string
@@ -562,6 +572,61 @@ mod tests {
         (xkey, dpk)
     }
 
+    // Helper to generate a DescriptorSecretKey::Single
+    fn create_dsk_single(
+        compressed: bool,
+        origin: Option<(Fingerprint, DerivationPath)>,
+        index: u32,
+    ) -> (PrivateKey, DescriptorSecretKey) {
+        let sk = dummy::sk_at_index(index);
+        let key = if compressed {
+            PrivateKey::new(sk, NetworkKind::Main)
+        } else {
+            PrivateKey::new_uncompressed(sk, NetworkKind::Main)
+        };
+        let dsk = DescriptorSecretKey::Single(SinglePriv { key, origin });
+
+        (key, dsk)
+    }
+
+    // Helper to generate a DescriptorSecretKey::XPub
+    fn create_dsk_xpriv(
+        origin: Option<(Fingerprint, DerivationPath)>,
+        xpriv_derivation_paths_str: &str,
+        wildcard: Wildcard,
+    ) -> (Xpriv, DescriptorSecretKey) {
+        let xkey = dummy::xpriv();
+        let dsk = DescriptorSecretKey::XPrv(DescriptorXKey {
+            origin,
+            xkey,
+            derivation_path: dp_from_str(xpriv_derivation_paths_str),
+            wildcard,
+        });
+
+        (xkey, dsk)
+    }
+
+    // Helper to generate a DescriptorSecretKey::MultiXPub
+    fn create_dsk_multixpriv(
+        origin: Option<(Fingerprint, DerivationPath)>,
+        xpriv_derivation_paths_str: &[&str],
+        wildcard: Wildcard,
+    ) -> (Xpriv, DescriptorSecretKey) {
+        let paths: Vec<DerivationPath> = xpriv_derivation_paths_str
+            .iter()
+            .map(|s| dp_from_str(s))
+            .collect();
+        let xkey = dummy::xpriv();
+        let dsk = DescriptorSecretKey::MultiXPrv(DescriptorMultiXKey {
+            origin,
+            xkey,
+            derivation_paths: DerivPaths::new(paths).unwrap(),
+            wildcard,
+        });
+
+        (xkey, dsk)
+    }
+
     /// Helper to convert any EncodeTemplate to template bytes
     fn template_of<T: EncodeTemplate>(t: T) -> Vec<u8> {
         let mut template = Vec::new();
@@ -589,9 +654,24 @@ mod tests {
         expected_template: Vec<u8>,
         expected_payload: Vec<u8>,
     ) {
+        assert_eq_template_and_payload_with_key_map(
+            t,
+            expected_template,
+            expected_payload,
+            &KeyMap::new(),
+        )
+    }
+
+    /// Helper to check equality of any EncodeTemplate and template and payload bytes
+    fn assert_eq_template_and_payload_with_key_map<T: EncodeTemplate>(
+        t: T,
+        expected_template: Vec<u8>,
+        expected_payload: Vec<u8>,
+        key_map: &KeyMap,
+    ) {
         let mut template = Vec::new();
         let mut payload = Vec::new();
-        t.encode_template(&mut template, &mut payload, &KeyMap::new());
+        t.encode_template(&mut template, &mut payload, key_map);
 
         assert_eq!(template, expected_template);
         assert_eq!(payload, expected_payload);
@@ -744,6 +824,125 @@ mod tests {
     }
 
     #[test]
+    fn test_descriptor_secret_key() {
+        // Dummy Descriptor Public Key
+        let (_, dpk) = create_dpk_single_full(true, None, 1);
+        let mut km = KeyMap::new();
+
+        // Single FullKey Compressed, No Origin
+        let (sk1, dsk1) = create_dsk_single(true, None, 1);
+        km.insert(dpk.clone(), dsk1.clone());
+        let expected_template_sk1 = [vec![
+            Tag::CompressedSinglePriv.value(),
+            Tag::NoOrigin.value(),
+        ]]
+        .concat();
+        assert_eq_template_and_payload_with_key_map(
+            dpk.clone(),
+            expected_template_sk1,
+            sk1.to_bytes(),
+            &km,
+        );
+
+        // Single FullKey Uncompressed, No Origin
+        let (sk2, dsk2) = create_dsk_single(false, None, 2);
+        km.insert(dpk.clone(), dsk2.clone());
+        let expected_template_sk2 = [vec![
+            Tag::UncompressedSinglePriv.value(),
+            Tag::NoOrigin.value(),
+        ]]
+        .concat();
+        assert_eq_template_and_payload_with_key_map(
+            dpk.clone(),
+            expected_template_sk2,
+            sk2.to_bytes(),
+            &km,
+        );
+
+        // Single FullKey Compressed, With Origin
+        let origin_fp = fp_from_str("12345678");
+        let origin_path = dp_from_str("m/84h/0h/0h");
+        let (sk3, dsk3) = create_dsk_single(true, Some((origin_fp, origin_path.clone())), 3);
+        km.insert(dpk.clone(), dsk3.clone());
+        let expected_template = [
+            vec![Tag::CompressedSinglePriv.value(), Tag::Origin.value()],
+            template_of(origin_path.clone()),
+        ]
+        .concat();
+        let expected_payload = [origin_fp.as_bytes().to_vec(), sk3.to_bytes()].concat();
+        assert_eq_template_and_payload_with_key_map(
+            dpk.clone(),
+            expected_template,
+            expected_payload,
+            &km,
+        );
+
+        // XPriv, No Origin, specific derivation path, NoWildcard
+        let xpriv_path_str = "m/0/0";
+        let (xpriv1, dsk_xpriv1) = create_dsk_xpriv(None, xpriv_path_str, Wildcard::None);
+        km.insert(dpk.clone(), dsk_xpriv1.clone());
+        let expected_template = [
+            vec![Tag::XPriv.value(), Tag::NoOrigin.value()],
+            template_of(dp_from_str(xpriv_path_str)),
+            template_of(Wildcard::None),
+        ]
+        .concat();
+        assert_eq_template_and_payload_with_key_map(
+            dpk.clone(),
+            expected_template,
+            xpriv1.encode().to_vec(),
+            &km,
+        );
+
+        // XPriv, With Origin, different derivation path, UnhardenedWildcard
+        let (xpriv2, dsk_xpriv2) = create_dsk_xpriv(
+            Some((origin_fp, origin_path.clone())),
+            "m/1",
+            Wildcard::Unhardened,
+        );
+        km.insert(dpk.clone(), dsk_xpriv2.clone());
+        let expected_template = [
+            vec![Tag::XPriv.value(), Tag::Origin.value()],
+            template_of(origin_path.clone()),
+            template_of(dp_from_str("m/1")),
+            template_of(Wildcard::Unhardened),
+        ]
+        .concat();
+        let expected_payload = [origin_fp.as_bytes().to_vec(), xpriv2.encode().to_vec()].concat();
+        assert_eq_template_and_payload_with_key_map(
+            dpk.clone(),
+            expected_template,
+            expected_payload,
+            &km,
+        );
+
+        // MultiXPub, No Origin, specific derivation paths, HardenedWildcard
+        let multixpriv_paths_str = ["m/0/0", "m/0/1"];
+        let (xpriv1, dsk_multixpriv1) =
+            create_dsk_multixpriv(None, &multixpriv_paths_str, Wildcard::Hardened);
+        km.insert(dpk.clone(), dsk_multixpriv1.clone());
+        let paths = DerivPaths::new(
+            multixpriv_paths_str
+                .iter()
+                .map(|s| dp_from_str(s))
+                .collect(),
+        )
+        .unwrap();
+        let expected_dsk_multixpriv1 = [
+            vec![Tag::MultiXPriv.value(), Tag::NoOrigin.value()],
+            template_of(paths),
+            template_of(Wildcard::Hardened),
+        ]
+        .concat();
+        assert_eq_template_and_payload_with_key_map(
+            dpk.clone(),
+            expected_dsk_multixpriv1,
+            xpriv1.encode().to_vec(),
+            &km,
+        );
+    }
+
+    #[test]
     fn test_descriptor_xkey_multixkey() {
         let xpub = dummy::xpub();
 
@@ -781,6 +980,47 @@ mod tests {
             multixkey,
             expected_multixkey,
             xpub.clone().encode().to_vec(),
+        );
+    }
+
+    #[test]
+    fn test_descriptor_xkey_multixkey_priv() {
+        let xpriv = dummy::xpriv();
+
+        // DescriptorXKey
+        let xkey = DescriptorXKey {
+            origin: None,
+            xkey: xpriv,
+            derivation_path: dp_from_str("m/0"),
+            wildcard: Wildcard::Unhardened,
+        };
+        let expected_xkey_template = [
+            template_of(dp_from_str("m/0")),
+            template_of(Wildcard::Unhardened),
+        ]
+        .concat();
+        assert_eq_template_and_payload(
+            xkey.clone(),
+            expected_xkey_template,
+            xpriv.clone().encode().to_vec(),
+        );
+
+        // DescriptorMultiXKey
+        let multixkey_paths_str = ["m/0/0", "m/0/1"];
+        let multixkey_paths =
+            DerivPaths::new(multixkey_paths_str.iter().map(|s| dp_from_str(s)).collect()).unwrap();
+        let multixkey = DescriptorMultiXKey {
+            origin: None,
+            xkey: xpriv,
+            derivation_paths: multixkey_paths.clone(),
+            wildcard: Wildcard::None,
+        };
+        let expected_multixkey =
+            [template_of(multixkey_paths), template_of(Wildcard::None)].concat();
+        assert_eq_template_and_payload(
+            multixkey,
+            expected_multixkey,
+            xpriv.clone().encode().to_vec(),
         );
     }
 

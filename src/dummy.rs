@@ -1,20 +1,22 @@
 // SPDX-License-Identifier: CC0-1.0
 
 use bitcoin::{
-    bip32::{Fingerprint, Xpub},
+    NetworkKind,
+    bip32::{Fingerprint, Xpriv, Xpub},
     hashes::{Hash, hash160, ripemd160, sha256, sha256d},
     secp256k1::{PublicKey as SecpPublicKey, Secp256k1, SecretKey},
 };
 use miniscript::{AbsLockTime, RelLockTime, hash256};
-use std::str::FromStr;
+
+pub fn sk_at_index(index: u32) -> SecretKey {
+    let mut sk_bytes = [0u8; 32];
+    sk_bytes[28..32].copy_from_slice(&index.to_be_bytes());
+    SecretKey::from_slice(&sk_bytes).unwrap()
+}
 
 pub fn pk_at_index(index: u32) -> SecpPublicKey {
     let secp = Secp256k1::new();
-    let mut sk_bytes = [0u8; 32];
-    sk_bytes[28..32].copy_from_slice(&index.to_be_bytes());
-    let sk = SecretKey::from_slice(&sk_bytes).unwrap();
-
-    SecpPublicKey::from_secret_key(&secp, &sk)
+    SecpPublicKey::from_secret_key(&secp, &sk_at_index(index))
 }
 
 pub fn pk() -> SecpPublicKey {
@@ -22,7 +24,12 @@ pub fn pk() -> SecpPublicKey {
 }
 
 pub fn xpub() -> Xpub {
-    Xpub::from_str("xpub6EigxozzGaNVWUwEFnbyX6oHPdpWTKgJgbfpRbAcdiGpGMrdpPinCoHBXehu35sqJHpgLDTxigAnFQG3opKjXQoSmGMrMNHz81ALZSBRCWw").unwrap()
+    let secp = Secp256k1::new();
+    Xpub::from_priv(&secp, &xpriv())
+}
+
+pub fn xpriv() -> Xpriv {
+    Xpriv::new_master(NetworkKind::Main, &[0u8; 32]).unwrap()
 }
 
 pub fn fp() -> Fingerprint {
