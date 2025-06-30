@@ -12,14 +12,15 @@ readme = "README.md"
 rust-version = "1.85.0"
 
 [features]
+cli = ["anyhow", "clap", "hex"]
 default = ["std"]
 std = ["bitcoin/std"]
 compiler = []
 trace = []
 
 [dependencies]
-anyhow = "1.0.98"
+anyhow = { version = "1.0.98", optional = true }
 bitcoin = "0.32.5"
 miniscript = "12.3.2"
-clap = { version = "4.4", features = ["derive"] }
-hex = "0.4.3"
+clap = { version = "4.4", features = ["derive"], optional = true }
+hex = { version = "0.4.3", optional = true }

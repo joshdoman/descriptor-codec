@@ -26,6 +26,34 @@ let decoded = decode(&encoded).unwrap();
 assert_eq!(descriptor, decoded);
 ```
 
+## CLI Usage
+
+### Installation
+To build the project, use the following command:
+```bash
+cargo build --release --features cli
+```
+The executable will be located at `./target/release/descriptor-codec`.
+
+### Commands
+
+*   #### Encode a Descriptor
+    Encodes a Bitcoin descriptor and outputs the result as hex.
+    ```bash
+    ./target/release/descriptor-codec encode <DESCRIPTOR_STRING>
+    ```
+    **Arguments**:
+    *   `<DESCRIPTOR_STRING>`: The Bitcoin descriptor string to encode.
+
+*   #### Decrypt a Descriptor
+    Decodes hex-encoded descriptor data.
+    ```bash
+    ./target/release/descriptor-codec decode <DATA>
+    ```
+
+    **Arguments**:
+    *   `<DATA>`: Hex-encoded descriptor data.
+
 ## Use Cases
 
 - Sharing complex multisig configurations via QR codes
@@ -35,4 +63,8 @@ assert_eq!(descriptor, decoded);
 
 ## License
 
-CC0-1.0
+This project is licensed under the CC0-1.0 License.
+
+## Author
+
+Joshua Doman <joshsdoman@gmail.com>
