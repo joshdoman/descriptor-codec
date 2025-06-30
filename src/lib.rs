@@ -65,8 +65,9 @@ use bitcoin::{
     secp256k1,
 };
 use miniscript::{
-    Descriptor, Translator, TranslatePk, hash256,
+    Descriptor, TranslatePk, Translator,
     descriptor::{DescriptorPublicKey, DescriptorSecretKey, KeyMap},
+    hash256,
 };
 use std::collections::BTreeMap;
 use std::str::FromStr;
@@ -129,8 +130,8 @@ pub fn parse_descriptor<C: secp256k1::Signing>(
 
     struct KeyMapWrapper<'a, C: secp256k1::Signing>(KeyMap, &'a secp256k1::Secp256k1<C>);
 
-    impl<'a, C: secp256k1::Signing> Translator<String, DescriptorPublicKey, miniscript::Error>
-        for KeyMapWrapper<'a, C>
+    impl<C: secp256k1::Signing> Translator<String, DescriptorPublicKey, miniscript::Error>
+        for KeyMapWrapper<'_, C>
     {
         fn pk(&mut self, pk: &String) -> Result<DescriptorPublicKey, miniscript::Error> {
             parse_key(pk, &mut self.0, self.1)

@@ -1048,10 +1048,10 @@ impl FromCompressablePayload for PrivateKey {
             .map_err(|e| Error::InvalidPayload(current_index, e.to_string()))?;
 
         if compressed {
-            return Ok(PrivateKey::new(sk, NetworkKind::Main));
+            Ok(PrivateKey::new(sk, NetworkKind::Main))
         } else {
-            return Ok(PrivateKey::new_uncompressed(sk, NetworkKind::Main));
-        };
+            Ok(PrivateKey::new_uncompressed(sk, NetworkKind::Main))
+        }
     }
 }
 
