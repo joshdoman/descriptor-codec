@@ -4,19 +4,20 @@
 
 use super::{tag::Tag, varint, *};
 use bitcoin::{
-    XOnlyPublicKey,
-    bip32::{ChildNumber, DerivationPath, Fingerprint, Xpub},
+    NetworkKind, PrivateKey, PublicKey, XOnlyPublicKey,
+    bip32::{ChildNumber, DerivationPath, Fingerprint, Xpriv, Xpub},
     hashes::{
         Hash, hash160::Hash as Hash160, ripemd160::Hash as Ripemd160, sha256::Hash as Sha256,
         sha256d,
     },
-    key::PublicKey,
+    secp256k1::{Secp256k1, SecretKey, constants::SECRET_KEY_SIZE},
 };
 use miniscript::{
     AbsLockTime, BareCtx, Legacy, Miniscript, RelLockTime, ScriptContext, Segwitv0, Tap, Threshold,
     descriptor::{
-        Bare, DerivPaths, Descriptor, DescriptorMultiXKey, DescriptorPublicKey, DescriptorXKey,
-        Pkh, Sh, SinglePub, SinglePubKey, SortedMultiVec, TapTree, Tr, Wildcard, Wpkh, Wsh,
+        Bare, DerivPaths, Descriptor, DescriptorMultiXKey, DescriptorPublicKey,
+        DescriptorSecretKey, DescriptorXKey, KeyMap, Pkh, Sh, SinglePriv, SinglePub, SinglePubKey,
+        SortedMultiVec, TapTree, Tr, Wildcard, Wpkh, Wsh,
     },
     hash256::Hash as Hash256,
     miniscript::decode::Terminal,
@@ -77,11 +78,14 @@ impl error::Error for Error {}
 
 /// Returns a template descriptor with dummy keys, fingerprints, hashes, and timelocks and
 /// the number of decoded bytes.
-pub fn decode_template(input: &[u8]) -> Result<(Descriptor<DescriptorPublicKey>, usize), Error> {
+pub fn decode_template(
+    input: &[u8],
+) -> Result<(Descriptor<DescriptorPublicKey>, KeyMap, usize), Error> {
     let mut index = 0;
-    let descriptor = Descriptor::from_template(input, &mut index, &[], &mut 0)?;
+    let mut key_map = KeyMap::new();
+    let descriptor = Descriptor::from_template(input, &mut index, &[], &mut 0, &mut key_map)?;
 
-    Ok((descriptor, index))
+    Ok((descriptor, key_map, index))
 }
 
 /// Returns a fully decoded descriptor applying a payload containing the keys, fingerprints,
@@ -89,15 +93,17 @@ pub fn decode_template(input: &[u8]) -> Result<(Descriptor<DescriptorPublicKey>,
 pub fn decode_with_payload(
     input: &[u8],
     payload: &[u8],
-) -> Result<Descriptor<DescriptorPublicKey>, Error> {
+) -> Result<(Descriptor<DescriptorPublicKey>, KeyMap), Error> {
     let mut payload_index = 0;
-    let descriptor = Descriptor::from_template(input, &mut 0, payload, &mut payload_index)?;
+    let mut key_map = KeyMap::new();
+    let descriptor =
+        Descriptor::from_template(input, &mut 0, payload, &mut payload_index, &mut key_map)?;
 
     if payload_index < payload.len() {
         return Err(Error::PayloadTooLarge(payload_index, payload.len()));
     }
 
-    Ok(descriptor)
+    Ok((descriptor, key_map))
 }
 
 trait FromTemplate: Sized {
@@ -106,6 +112,7 @@ trait FromTemplate: Sized {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error>;
 }
 
@@ -127,6 +134,7 @@ impl FromTemplate for Descriptor<DescriptorPublicKey> {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         if *index >= input.len() {
             return Err(Error::MissingBytes);
@@ -140,36 +148,42 @@ impl FromTemplate for Descriptor<DescriptorPublicKey> {
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?),
             Tag::Wsh => Descriptor::Wsh(Wsh::<DescriptorPublicKey>::from_template(
                 input,
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?),
             Tag::Tr => Descriptor::Tr(Tr::<DescriptorPublicKey>::from_template(
                 input,
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?),
             Tag::Wpkh => Descriptor::Wpkh(Wpkh::<DescriptorPublicKey>::from_template(
                 input,
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?),
             Tag::Pkh => Descriptor::Pkh(Pkh::<DescriptorPublicKey>::from_template(
                 input,
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?),
             Tag::Bare => Descriptor::Bare(Bare::<DescriptorPublicKey>::from_template(
                 input,
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?),
             _ => return Err(Error::InvalidTag(current_index)),
         };
@@ -184,6 +198,7 @@ impl FromTemplate for Sh<DescriptorPublicKey> {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         let current_index = *index;
         *index += 1;
@@ -200,6 +215,7 @@ impl FromTemplate for Sh<DescriptorPublicKey> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?;
                 Sh::new_sortedmulti(sorted_multi.k(), sorted_multi.pks().to_vec())
             }
@@ -208,15 +224,23 @@ impl FromTemplate for Sh<DescriptorPublicKey> {
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?)),
             Tag::Wpkh => Ok(Sh::new_with_wpkh(
-                Wpkh::<DescriptorPublicKey>::from_template(input, index, payload, payload_index)?,
+                Wpkh::<DescriptorPublicKey>::from_template(
+                    input,
+                    index,
+                    payload,
+                    payload_index,
+                    key_map,
+                )?,
             )),
             _ => Sh::new(Miniscript::<DescriptorPublicKey, Legacy>::from_template(
                 input,
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?),
         };
 
@@ -233,6 +257,7 @@ impl FromTemplate for Wsh<DescriptorPublicKey> {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         let current_index = *index;
         *index += 1;
@@ -249,6 +274,7 @@ impl FromTemplate for Wsh<DescriptorPublicKey> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?;
                 Wsh::new_sortedmulti(sorted_multi.k(), sorted_multi.pks().to_vec())
             }
@@ -257,6 +283,7 @@ impl FromTemplate for Wsh<DescriptorPublicKey> {
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?),
         };
 
@@ -273,6 +300,7 @@ impl FromTemplate for Tr<DescriptorPublicKey> {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         let current_index = *index;
         *index += 1;
@@ -282,7 +310,7 @@ impl FromTemplate for Tr<DescriptorPublicKey> {
         }
 
         let internal_key =
-            DescriptorPublicKey::from_template(input, index, payload, payload_index)?;
+            DescriptorPublicKey::from_template(input, index, payload, payload_index, key_map)?;
 
         let tree = if *index < input.len() && Tag::from(input[*index]) == Tag::TapTree {
             Some(TapTree::<DescriptorPublicKey>::from_template(
@@ -290,6 +318,7 @@ impl FromTemplate for Tr<DescriptorPublicKey> {
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?)
         } else {
             None
@@ -308,6 +337,7 @@ impl FromTemplate for Wpkh<DescriptorPublicKey> {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         let current_index = *index;
         *index += 1;
@@ -317,6 +347,7 @@ impl FromTemplate for Wpkh<DescriptorPublicKey> {
             index,
             payload,
             payload_index,
+            key_map,
         )?) {
             Ok(wpkh) => Ok(wpkh),
             Err(err) => Err(Error::InvalidMiniscript(current_index, err.to_string())),
@@ -330,6 +361,7 @@ impl FromTemplate for Pkh<DescriptorPublicKey> {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         let current_index = *index;
         *index += 1;
@@ -339,8 +371,9 @@ impl FromTemplate for Pkh<DescriptorPublicKey> {
             index,
             payload,
             payload_index,
+            key_map,
         )?) {
-            Ok(wpkh) => Ok(wpkh),
+            Ok(pkh) => Ok(pkh),
             Err(err) => Err(Error::InvalidMiniscript(current_index, err.to_string())),
         }
     }
@@ -352,6 +385,7 @@ impl FromTemplate for Bare<DescriptorPublicKey> {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         let current_index = *index;
         *index += 1;
@@ -361,6 +395,7 @@ impl FromTemplate for Bare<DescriptorPublicKey> {
             index,
             payload,
             payload_index,
+            key_map,
         )?;
         let bare = Bare::new(ms);
         match bare {
@@ -376,6 +411,7 @@ impl FromTemplate for TapTree<DescriptorPublicKey> {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         let current_index = *index;
         *index += 1;
@@ -391,6 +427,7 @@ impl FromTemplate for TapTree<DescriptorPublicKey> {
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?;
 
             if *index < input.len() && Tag::from(input[*index]) == Tag::TapTree {
@@ -399,6 +436,7 @@ impl FromTemplate for TapTree<DescriptorPublicKey> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?;
 
                 Ok(Self::combine(left, right))
@@ -412,6 +450,7 @@ impl FromTemplate for TapTree<DescriptorPublicKey> {
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?;
 
             Ok(TapTree::Leaf(Arc::new(ms)))
@@ -425,6 +464,7 @@ impl<Ctx: ScriptContext> FromTemplate for SortedMultiVec<DescriptorPublicKey, Ct
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         let current_index = *index;
         *index += 1;
@@ -446,7 +486,8 @@ impl<Ctx: ScriptContext> FromTemplate for SortedMultiVec<DescriptorPublicKey, Ct
 
         let mut pks = Vec::new();
         for _ in 0..n {
-            let pk = DescriptorPublicKey::from_template(input, index, payload, payload_index)?;
+            let pk =
+                DescriptorPublicKey::from_template(input, index, payload, payload_index, key_map)?;
             pks.push(pk);
         }
 
@@ -463,6 +504,7 @@ impl<Ctx: ScriptContext> FromTemplate for Miniscript<DescriptorPublicKey, Ctx> {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         let current_index = *index;
         let ast = Terminal::<DescriptorPublicKey, Ctx>::from_template(
@@ -470,6 +512,7 @@ impl<Ctx: ScriptContext> FromTemplate for Miniscript<DescriptorPublicKey, Ctx> {
             index,
             payload,
             payload_index,
+            key_map,
         )?;
         match Self::from_ast(ast) {
             Ok(ms) => Ok(ms),
@@ -484,6 +527,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         if *index >= input.len() {
             return Err(Error::MissingBytes);
@@ -501,12 +545,14 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?),
             Tag::PkH => Self::PkH(DescriptorPublicKey::from_template(
                 input,
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?),
             Tag::RawPkH => Self::RawPkH(Hash160::from_payload(payload, payload_index)?),
             Tag::After => Self::After(AbsLockTime::from_payload(payload, payload_index)?),
@@ -521,6 +567,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
             ),
@@ -530,6 +577,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
             ),
@@ -539,6 +587,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
             ),
@@ -548,6 +597,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
             ),
@@ -557,6 +607,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
             ),
@@ -566,6 +617,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
             ),
@@ -575,6 +627,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
             ),
@@ -584,6 +637,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
                 Miniscript::<DescriptorPublicKey, Ctx>::from_template(
@@ -591,6 +645,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
             ),
@@ -600,6 +655,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
                 Miniscript::<DescriptorPublicKey, Ctx>::from_template(
@@ -607,6 +663,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
             ),
@@ -616,6 +673,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
                 Miniscript::<DescriptorPublicKey, Ctx>::from_template(
@@ -623,6 +681,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
                 Miniscript::<DescriptorPublicKey, Ctx>::from_template(
@@ -630,6 +689,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
             ),
@@ -639,6 +699,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
                 Miniscript::<DescriptorPublicKey, Ctx>::from_template(
@@ -646,6 +707,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
             ),
@@ -655,6 +717,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
                 Miniscript::<DescriptorPublicKey, Ctx>::from_template(
@@ -662,6 +725,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
             ),
@@ -671,6 +735,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
                 Miniscript::<DescriptorPublicKey, Ctx>::from_template(
@@ -678,6 +743,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
             ),
@@ -687,6 +753,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
                 Miniscript::<DescriptorPublicKey, Ctx>::from_template(
@@ -694,6 +761,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?
                 .into(),
             ),
@@ -703,6 +771,7 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?,
             ),
             Tag::Multi => Self::Multi(Threshold::<DescriptorPublicKey, 20>::from_template(
@@ -710,12 +779,14 @@ impl<Ctx: ScriptContext> FromTemplate for Terminal<DescriptorPublicKey, Ctx> {
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?),
             Tag::MultiA => Self::MultiA(Threshold::<DescriptorPublicKey, 125000>::from_template(
                 input,
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?),
             _ => return Err(Error::InvalidTag(current_index)),
         };
@@ -730,12 +801,14 @@ impl<T: FromTemplate> FromTemplate for Arc<T> {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         Ok(Arc::new(T::from_template(
             input,
             index,
             payload,
             payload_index,
+            key_map,
         )?))
     }
 }
@@ -746,6 +819,7 @@ impl<T: FromTemplate, const MAX: usize> FromTemplate for Threshold<T, MAX> {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         if *index >= input.len() {
             return Err(Error::MissingBytes);
@@ -765,7 +839,7 @@ impl<T: FromTemplate, const MAX: usize> FromTemplate for Threshold<T, MAX> {
 
         let mut ts = Vec::new();
         for _ in 0..n {
-            let t = T::from_template(input, index, payload, payload_index)?;
+            let t = T::from_template(input, index, payload, payload_index, key_map)?;
             ts.push(t);
         }
 
@@ -782,9 +856,39 @@ impl FromTemplate for DescriptorPublicKey {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         if *index + 1 >= input.len() {
             return Err(Error::MissingBytes);
+        }
+
+        // Check if this is a private key
+        let tag = Tag::from(input[*index]);
+        match tag {
+            Tag::XPriv
+            | Tag::MultiXPriv
+            | Tag::CompressedSinglePriv
+            | Tag::UncompressedSinglePriv => {
+                let secret_key = DescriptorSecretKey::from_template(
+                    input,
+                    index,
+                    payload,
+                    payload_index,
+                    key_map,
+                )?;
+
+                // Convert secret key to public key
+                let secp = Secp256k1::new();
+                let public_key = secret_key.to_public(&secp).map_err(|e| {
+                    Error::InvalidPayload(*index, format!("Unable to derive public key: {}", e))
+                })?;
+
+                // Insert key mapping
+                key_map.insert(public_key.clone(), secret_key);
+
+                return Ok(public_key);
+            }
+            _ => {}
         }
 
         let current_index = *index;
@@ -795,7 +899,7 @@ impl FromTemplate for DescriptorPublicKey {
             Tag::Origin => {
                 let fingerprint_dummy = Fingerprint::from_payload(payload, payload_index)?;
                 let derivation_path =
-                    DerivationPath::from_template(input, index, payload, payload_index)?;
+                    DerivationPath::from_template(input, index, payload, payload_index, key_map)?;
 
                 Some((fingerprint_dummy, derivation_path))
             }
@@ -825,19 +929,147 @@ impl FromTemplate for DescriptorPublicKey {
                     index,
                     payload,
                     payload_index,
+                    key_map,
                 )?,
-                wildcard: Wildcard::from_template(input, index, payload, payload_index)?,
+                wildcard: Wildcard::from_template(input, index, payload, payload_index, key_map)?,
             }),
             Tag::MultiXPub => DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
                 origin,
                 xkey: Xpub::from_payload(payload, payload_index)?,
-                derivation_paths: DerivPaths::from_template(input, index, payload, payload_index)?,
-                wildcard: Wildcard::from_template(input, index, payload, payload_index)?,
+                derivation_paths: DerivPaths::from_template(
+                    input,
+                    index,
+                    payload,
+                    payload_index,
+                    key_map,
+                )?,
+                wildcard: Wildcard::from_template(input, index, payload, payload_index, key_map)?,
             }),
             _ => return Err(Error::InvalidTag(current_index)),
         };
 
         Ok(template)
+    }
+}
+
+impl FromTemplate for DescriptorSecretKey {
+    fn from_template(
+        input: &[u8],
+        index: &mut usize,
+        payload: &[u8],
+        payload_index: &mut usize,
+        key_map: &mut KeyMap,
+    ) -> Result<Self, Error> {
+        if *index + 1 >= input.len() {
+            return Err(Error::MissingBytes);
+        }
+
+        let current_index = *index;
+        *index += 2;
+
+        let origin = match Tag::from(input[current_index + 1]) {
+            Tag::Unrecognized => return Err(Error::UnrecognizedTag(current_index + 1)),
+            Tag::Origin => {
+                let fingerprint = Fingerprint::from_payload(payload, payload_index)?;
+                let derivation_path =
+                    DerivationPath::from_template(input, index, payload, payload_index, key_map)?;
+
+                Some((fingerprint, derivation_path))
+            }
+            Tag::NoOrigin => None,
+            _ => return Err(Error::InvalidTag(current_index + 1)),
+        };
+
+        let secret_key = match Tag::from(input[current_index]) {
+            Tag::Unrecognized => return Err(Error::UnrecognizedTag(current_index)),
+            Tag::CompressedSinglePriv => DescriptorSecretKey::Single(SinglePriv {
+                key: PrivateKey::from_payload(true, payload, payload_index)?,
+                origin,
+            }),
+            Tag::UncompressedSinglePriv => DescriptorSecretKey::Single(SinglePriv {
+                key: PrivateKey::from_payload(false, payload, payload_index)?,
+                origin,
+            }),
+            Tag::XPriv => DescriptorSecretKey::XPrv(DescriptorXKey {
+                origin,
+                xkey: Xpriv::from_payload(payload, payload_index)?,
+                derivation_path: DerivationPath::from_template(
+                    input,
+                    index,
+                    payload,
+                    payload_index,
+                    key_map,
+                )?,
+                wildcard: Wildcard::from_template(input, index, payload, payload_index, key_map)?,
+            }),
+            Tag::MultiXPriv => DescriptorSecretKey::MultiXPrv(DescriptorMultiXKey {
+                origin,
+                xkey: Xpriv::from_payload(payload, payload_index)?,
+                derivation_paths: DerivPaths::from_template(
+                    input,
+                    index,
+                    payload,
+                    payload_index,
+                    key_map,
+                )?,
+                wildcard: Wildcard::from_template(input, index, payload, payload_index, key_map)?,
+            }),
+            _ => return Err(Error::InvalidTag(current_index)),
+        };
+
+        Ok(secret_key)
+    }
+}
+
+impl FromCompressablePayload for PrivateKey {
+    fn from_payload(
+        compressed: bool,
+        payload: &[u8],
+        payload_index: &mut usize,
+    ) -> Result<Self, Error> {
+        if payload.is_empty() {
+            if compressed {
+                return Ok(PrivateKey::new(dummy::sk(), NetworkKind::Main));
+            } else {
+                return Ok(PrivateKey::new_uncompressed(dummy::sk(), NetworkKind::Main));
+            };
+        }
+
+        let current_index = *payload_index;
+        *payload_index += SECRET_KEY_SIZE;
+
+        if *payload_index > payload.len() {
+            return Err(Error::MissingBytes);
+        }
+
+        let sk = SecretKey::from_slice(&payload[current_index..current_index + SECRET_KEY_SIZE])
+            .map_err(|e| Error::InvalidPayload(current_index, e.to_string()))?;
+
+        if compressed {
+            return Ok(PrivateKey::new(sk, NetworkKind::Main));
+        } else {
+            return Ok(PrivateKey::new_uncompressed(sk, NetworkKind::Main));
+        };
+    }
+}
+
+impl FromPayload for Xpriv {
+    fn from_payload(payload: &[u8], payload_index: &mut usize) -> Result<Self, Error> {
+        if payload.is_empty() {
+            return Ok(dummy::xpriv());
+        }
+
+        let current_index = *payload_index;
+        *payload_index += 78;
+
+        if *payload_index > payload.len() {
+            return Err(Error::MissingBytes);
+        }
+
+        match Self::decode(&payload[current_index..current_index + 78]) {
+            Ok(xpriv) => Ok(xpriv),
+            Err(err) => Err(Error::InvalidPayload(current_index, err.to_string())),
+        }
     }
 }
 
@@ -936,6 +1168,7 @@ impl FromTemplate for DerivationPath {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         if *index >= input.len() {
             return Err(Error::MissingBytes);
@@ -953,6 +1186,7 @@ impl FromTemplate for DerivationPath {
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?);
         }
 
@@ -966,6 +1200,7 @@ impl FromTemplate for ChildNumber {
         index: &mut usize,
         _payload: &[u8],
         _payload_index: &mut usize,
+        _key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         if *index >= input.len() {
             return Err(Error::MissingBytes);
@@ -997,6 +1232,7 @@ impl FromTemplate for DerivPaths {
         index: &mut usize,
         payload: &[u8],
         payload_index: &mut usize,
+        key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         if *index >= input.len() {
             return Err(Error::MissingBytes);
@@ -1015,6 +1251,7 @@ impl FromTemplate for DerivPaths {
                 index,
                 payload,
                 payload_index,
+                key_map,
             )?);
         }
 
@@ -1032,6 +1269,7 @@ impl FromTemplate for Wildcard {
         index: &mut usize,
         _payload: &[u8],
         _payload_index: &mut usize,
+        _key_map: &mut KeyMap,
     ) -> Result<Self, Error> {
         if *index >= input.len() {
             return Err(Error::MissingBytes);
@@ -1284,7 +1522,7 @@ mod tests {
     fn template_of<T: EncodeTemplate>(t: T) -> Vec<u8> {
         let mut template = Vec::new();
         let mut payload = Vec::new();
-        t.encode_template(&mut template, &mut payload, &KeyMap::new());
+        t.encode_template(&mut template, &mut payload, &mut KeyMap::new());
         template
     }
 
@@ -1292,7 +1530,7 @@ mod tests {
     fn payload_of<T: EncodeTemplate>(t: T) -> Vec<u8> {
         let mut template = Vec::new();
         let mut payload = Vec::new();
-        t.encode_template(&mut template, &mut payload, &KeyMap::new());
+        t.encode_template(&mut template, &mut payload, &mut KeyMap::new());
         payload
     }
 
@@ -1311,16 +1549,36 @@ mod tests {
     fn test_wildcard() {
         assert_eq!(
             Wildcard::None,
-            Wildcard::from_template(&template_of(Wildcard::None), &mut 0, &[], &mut 0).unwrap()
+            Wildcard::from_template(
+                &template_of(Wildcard::None),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             Wildcard::Unhardened,
-            Wildcard::from_template(&template_of(Wildcard::Unhardened), &mut 0, &[], &mut 0)
-                .unwrap()
+            Wildcard::from_template(
+                &template_of(Wildcard::Unhardened),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             Wildcard::Hardened,
-            Wildcard::from_template(&template_of(Wildcard::Hardened), &mut 0, &[], &mut 0).unwrap()
+            Wildcard::from_template(
+                &template_of(Wildcard::Hardened),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
     }
 
@@ -1330,28 +1588,44 @@ mod tests {
         let dp_empty = DerivationPath::master();
         assert_eq!(
             dp_empty.clone(),
-            DerivationPath::from_template(&template_of(dp_empty), &mut 0, &[], &mut 0).unwrap()
+            DerivationPath::from_template(
+                &template_of(dp_empty),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         // Path: "m/0"
         let dp_0 = dp_from_str("m/0");
         assert_eq!(
             dp_0.clone(),
-            DerivationPath::from_template(&template_of(dp_0), &mut 0, &[], &mut 0).unwrap()
+            DerivationPath::from_template(&template_of(dp_0), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         // Path: "m/1'"
         let dp_1h = dp_from_str("m/1'");
         assert_eq!(
             dp_1h.clone(),
-            DerivationPath::from_template(&template_of(dp_1h), &mut 0, &[], &mut 0).unwrap()
+            DerivationPath::from_template(&template_of(dp_1h), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         // Path: "m/42/23h/0/1h"
         let dp_complex = dp_from_str("m/42/23h/0/1h");
         assert_eq!(
             dp_complex.clone(),
-            DerivationPath::from_template(&template_of(dp_complex), &mut 0, &[], &mut 0).unwrap()
+            DerivationPath::from_template(
+                &template_of(dp_complex),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
     }
 
@@ -1362,7 +1636,14 @@ mod tests {
         let deriv_paths_one = DerivPaths::new(vec![dp_from_str(dp1_str)]).unwrap();
         assert_eq!(
             deriv_paths_one.clone(),
-            DerivPaths::from_template(&template_of(deriv_paths_one), &mut 0, &[], &mut 0).unwrap()
+            DerivPaths::from_template(
+                &template_of(deriv_paths_one),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         // Multiple paths
@@ -1371,8 +1652,14 @@ mod tests {
             DerivPaths::new(vec![dp_from_str(dp1_str), dp_from_str(dp2_str)]).unwrap();
         assert_eq!(
             deriv_paths_multi.clone(),
-            DerivPaths::from_template(&template_of(deriv_paths_multi), &mut 0, &[], &mut 0)
-                .unwrap()
+            DerivPaths::from_template(
+                &template_of(deriv_paths_multi),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
     }
 
@@ -1382,8 +1669,14 @@ mod tests {
         let pk1 = create_dpk_single_full(true, None, 2);
         assert_eq!(
             create_dpk_single_full(true, None, 1),
-            DescriptorPublicKey::from_template(&template_of(pk1.clone()), &mut 0, &[], &mut 0)
-                .unwrap()
+            DescriptorPublicKey::from_template(
+                &template_of(pk1.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             pk1.clone(),
@@ -1391,7 +1684,8 @@ mod tests {
                 &template_of(pk1.clone()),
                 &mut 0,
                 &payload_of(pk1.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1400,8 +1694,14 @@ mod tests {
         let pk2 = create_dpk_single_full(false, None, 2);
         assert_eq!(
             create_dpk_single_full(false, None, 1),
-            DescriptorPublicKey::from_template(&template_of(pk2.clone()), &mut 0, &[], &mut 0)
-                .unwrap()
+            DescriptorPublicKey::from_template(
+                &template_of(pk2.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             pk2.clone(),
@@ -1409,7 +1709,8 @@ mod tests {
                 &template_of(pk2.clone()),
                 &mut 0,
                 &payload_of(pk2.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1418,8 +1719,14 @@ mod tests {
         let pk_xonly = create_dpk_xonly_no_origin(2);
         assert_eq!(
             create_dpk_xonly_no_origin(1),
-            DescriptorPublicKey::from_template(&template_of(pk_xonly.clone()), &mut 0, &[], &mut 0)
-                .unwrap()
+            DescriptorPublicKey::from_template(
+                &template_of(pk_xonly.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             pk_xonly.clone(),
@@ -1427,7 +1734,8 @@ mod tests {
                 &template_of(pk_xonly.clone()),
                 &mut 0,
                 &payload_of(pk_xonly.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1438,8 +1746,14 @@ mod tests {
         let pk3 = create_dpk_single_full(true, Some((origin_fp, origin_path.clone())), 3);
         assert_eq!(
             create_dpk_single_full(true, Some((dummy::fp(), origin_path.clone())), 1),
-            DescriptorPublicKey::from_template(&template_of(pk3.clone()), &mut 0, &[], &mut 0)
-                .unwrap()
+            DescriptorPublicKey::from_template(
+                &template_of(pk3.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             pk3.clone(),
@@ -1447,7 +1761,8 @@ mod tests {
                 &template_of(pk3.clone()),
                 &mut 0,
                 &payload_of(pk3.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1462,7 +1777,8 @@ mod tests {
                 &template_of(dpk_xpub1.clone()),
                 &mut 0,
                 &[],
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1472,7 +1788,8 @@ mod tests {
                 &template_of(dpk_xpub1.clone()),
                 &mut 0,
                 &payload_of(dpk_xpub1.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1496,7 +1813,8 @@ mod tests {
                 &template_of(dpk_xpub2.clone()),
                 &mut 0,
                 &[],
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1506,7 +1824,8 @@ mod tests {
                 &template_of(dpk_xpub2.clone()),
                 &mut 0,
                 &payload_of(dpk_xpub2.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1526,7 +1845,8 @@ mod tests {
                 &template_of(dpk_multixpub1.clone()),
                 &mut 0,
                 &[],
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1536,7 +1856,8 @@ mod tests {
                 &template_of(dpk_multixpub1.clone()),
                 &mut 0,
                 &payload_of(dpk_multixpub1.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1549,25 +1870,29 @@ mod tests {
         let ms_true = MsSw0::TRUE;
         assert_eq!(
             ms_true.clone(),
-            MsSw0::from_template(&template_of(ms_true), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_true), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         let ms_false = MsSw0::FALSE;
         assert_eq!(
             ms_false.clone(),
-            MsSw0::from_template(&template_of(ms_false), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_false), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         let ms_pkk = MsSw0::from_ast(TerminalSw0::PkK(pk.clone())).unwrap();
         assert_eq!(
             ms_pkk.clone(),
-            MsSw0::from_template(&template_of(ms_pkk), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_pkk), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         let ms_pkh = MsSw0::from_ast(TerminalSw0::PkH(pk.clone())).unwrap();
         assert_eq!(
             ms_pkh.clone(),
-            MsSw0::from_template(&template_of(ms_pkh), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_pkh), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         // Terminals with ignored values
@@ -1575,7 +1900,14 @@ mod tests {
         let ms_raw_pkh = MsSw0::from_ast(TerminalSw0::RawPkH(hash160)).unwrap();
         assert_eq!(
             MsSw0::from_ast(TerminalSw0::RawPkH(dummy::hash160())).unwrap(),
-            MsSw0::from_template(&template_of(ms_raw_pkh.clone()), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(
+                &template_of(ms_raw_pkh.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             ms_raw_pkh.clone(),
@@ -1583,7 +1915,8 @@ mod tests {
                 &template_of(ms_raw_pkh.clone()),
                 &mut 0,
                 &payload_of(ms_raw_pkh.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1591,7 +1924,14 @@ mod tests {
         let ms_hash160 = MsSw0::from_ast(TerminalSw0::Hash160(hash160)).unwrap();
         assert_eq!(
             MsSw0::from_ast(TerminalSw0::Hash160(dummy::hash160())).unwrap(),
-            MsSw0::from_template(&template_of(ms_hash160.clone()), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(
+                &template_of(ms_hash160.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             ms_hash160.clone(),
@@ -1599,7 +1939,8 @@ mod tests {
                 &template_of(ms_hash160.clone()),
                 &mut 0,
                 &payload_of(ms_hash160.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1608,7 +1949,14 @@ mod tests {
         let ms_after = MsSw0::from_ast(TerminalSw0::After(after)).unwrap();
         assert_eq!(
             MsSw0::from_ast(TerminalSw0::After(dummy::after())).unwrap(),
-            MsSw0::from_template(&template_of(ms_after.clone()), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(
+                &template_of(ms_after.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             ms_after.clone(),
@@ -1616,7 +1964,8 @@ mod tests {
                 &template_of(ms_after.clone()),
                 &mut 0,
                 &payload_of(ms_after.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1625,7 +1974,14 @@ mod tests {
         let ms_older = MsSw0::from_ast(TerminalSw0::Older(older)).unwrap();
         assert_eq!(
             MsSw0::from_ast(TerminalSw0::Older(dummy::older())).unwrap(),
-            MsSw0::from_template(&template_of(ms_older.clone()), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(
+                &template_of(ms_older.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             ms_older.clone(),
@@ -1633,7 +1989,8 @@ mod tests {
                 &template_of(ms_older.clone()),
                 &mut 0,
                 &payload_of(ms_older.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1642,7 +1999,14 @@ mod tests {
         let ms_sha256 = MsSw0::from_ast(TerminalSw0::Sha256(sha256)).unwrap();
         assert_eq!(
             MsSw0::from_ast(TerminalSw0::Sha256(dummy::sha256())).unwrap(),
-            MsSw0::from_template(&template_of(ms_sha256.clone()), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(
+                &template_of(ms_sha256.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             ms_sha256.clone(),
@@ -1650,7 +2014,8 @@ mod tests {
                 &template_of(ms_sha256.clone()),
                 &mut 0,
                 &payload_of(ms_sha256.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1659,7 +2024,14 @@ mod tests {
         let ms_hash256 = MsSw0::from_ast(TerminalSw0::Hash256(hash256)).unwrap();
         assert_eq!(
             MsSw0::from_ast(TerminalSw0::Hash256(dummy::hash256())).unwrap(),
-            MsSw0::from_template(&template_of(ms_hash256.clone()), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(
+                &template_of(ms_hash256.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             ms_hash256.clone(),
@@ -1667,7 +2039,8 @@ mod tests {
                 &template_of(ms_hash256.clone()),
                 &mut 0,
                 &payload_of(ms_hash256.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1676,7 +2049,14 @@ mod tests {
         let ms_ripemd160 = MsSw0::from_ast(TerminalSw0::Ripemd160(ripemd160)).unwrap();
         assert_eq!(
             MsSw0::from_ast(TerminalSw0::Ripemd160(dummy::ripemd160())).unwrap(),
-            MsSw0::from_template(&template_of(ms_ripemd160.clone()), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(
+                &template_of(ms_ripemd160.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             ms_ripemd160.clone(),
@@ -1684,7 +2064,8 @@ mod tests {
                 &template_of(ms_ripemd160.clone()),
                 &mut 0,
                 &payload_of(ms_ripemd160.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1700,7 +2081,14 @@ mod tests {
         let multi_expected = TerminalSw0::Multi(Threshold::new(k, pks_expected.clone()).unwrap());
         assert_eq!(
             multi_expected.clone(),
-            TerminalSw0::from_template(&template_of(multi.clone()), &mut 0, &[], &mut 0).unwrap()
+            TerminalSw0::from_template(
+                &template_of(multi.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             multi.clone(),
@@ -1708,7 +2096,8 @@ mod tests {
                 &template_of(multi.clone()),
                 &mut 0,
                 &payload_of(multi.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1719,7 +2108,14 @@ mod tests {
             TerminalTap::MultiA(Threshold::new(k, pks_expected.clone()).unwrap());
         assert_eq!(
             multi_a_expected,
-            TerminalTap::from_template(&template_of(multi_a.clone()), &mut 0, &[], &mut 0).unwrap()
+            TerminalTap::from_template(
+                &template_of(multi_a.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             multi_a.clone(),
@@ -1727,7 +2123,8 @@ mod tests {
                 &template_of(multi_a.clone()),
                 &mut 0,
                 &payload_of(multi_a.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -1746,37 +2143,55 @@ mod tests {
         let ms_alt = MsSw0::from_ast(TerminalSw0::Alt(ms_true.clone())).unwrap();
         assert_eq!(
             ms_alt.clone(),
-            MsSw0::from_template(&template_of(ms_alt), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_alt), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         let ms_swap = MsSw0::from_ast(TerminalSw0::Swap(ms_hash160.clone())).unwrap();
         assert_eq!(
             ms_swap.clone(),
-            MsSw0::from_template(&template_of(ms_swap.clone()), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(
+                &template_of(ms_swap.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let ms_check = MsSw0::from_ast(TerminalSw0::Check(ms_pk_k.clone())).unwrap();
         assert_eq!(
             ms_check.clone(),
-            MsSw0::from_template(&template_of(ms_check), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_check), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         let ms_verify = MsSw0::from_ast(TerminalSw0::Verify(ms_true.clone())).unwrap();
         assert_eq!(
             ms_verify.clone(),
-            MsSw0::from_template(&template_of(ms_verify.clone()), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(
+                &template_of(ms_verify.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let ms_dupif = MsSw0::from_ast(TerminalSw0::DupIf(ms_verify.clone().into())).unwrap();
         assert_eq!(
             ms_dupif.clone(),
-            MsSw0::from_template(&template_of(ms_dupif), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_dupif), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         let ms_zerone = MsSw0::from_ast(TerminalSw0::ZeroNotEqual(ms_true.clone())).unwrap();
         assert_eq!(
             ms_zerone.clone(),
-            MsSw0::from_template(&template_of(ms_zerone), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_zerone), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         // Binary
@@ -1784,40 +2199,46 @@ mod tests {
             MsSw0::from_ast(TerminalSw0::AndV(ms_verify.clone().into(), ms_true.clone())).unwrap();
         assert_eq!(
             ms_andv.clone(),
-            MsSw0::from_template(&template_of(ms_andv), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_andv), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         let ms_andb =
             MsSw0::from_ast(TerminalSw0::AndB(ms_true.clone(), ms_swap.clone().into())).unwrap();
         assert_eq!(
             ms_andb.clone(),
-            MsSw0::from_template(&template_of(ms_andb), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_andb), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         let ms_orb =
             MsSw0::from_ast(TerminalSw0::OrB(ms_false.clone(), ms_swap.clone().into())).unwrap();
         assert_eq!(
             ms_orb.clone(),
-            MsSw0::from_template(&template_of(ms_orb), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_orb), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         let ms_orc =
             MsSw0::from_ast(TerminalSw0::OrC(ms_false.clone(), ms_verify.clone().into())).unwrap();
         assert_eq!(
             ms_orc.clone(),
-            MsSw0::from_template(&template_of(ms_orc), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_orc), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         let ms_ord = MsSw0::from_ast(TerminalSw0::OrD(ms_false.clone(), ms_true.clone())).unwrap();
         assert_eq!(
             ms_ord.clone(),
-            MsSw0::from_template(&template_of(ms_ord), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_ord), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         let ms_ori = MsSw0::from_ast(TerminalSw0::OrI(ms_true.clone(), ms_false.clone())).unwrap();
         assert_eq!(
             ms_ori.clone(),
-            MsSw0::from_template(&template_of(ms_ori), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_ori), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         // Ternary
@@ -1829,7 +2250,8 @@ mod tests {
         .unwrap();
         assert_eq!(
             ms_andor.clone(),
-            MsSw0::from_template(&template_of(ms_andor), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(ms_andor), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         let k = 1;
@@ -1842,7 +2264,8 @@ mod tests {
         .unwrap();
         assert_eq!(
             thresh.clone(),
-            MsSw0::from_template(&template_of(thresh), &mut 0, &[], &mut 0).unwrap()
+            MsSw0::from_template(&template_of(thresh), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
     }
 
@@ -1861,7 +2284,14 @@ mod tests {
         let expected_sorted_multi = SortedMultiSw0::new(k, expected_pks.clone()).unwrap();
         assert_eq!(
             expected_sorted_multi.clone(),
-            SortedMultiSw0::from_template(&template_of(sorted_multi), &mut 0, &[], &mut 0).unwrap()
+            SortedMultiSw0::from_template(
+                &template_of(sorted_multi),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
     }
 
@@ -1876,7 +2306,14 @@ mod tests {
         let tap_leaf = TapTree::Leaf(ms_leaf1.clone());
         assert_eq!(
             tap_leaf.clone(),
-            TapTree::from_template(&template_of(tap_leaf.clone()), &mut 0, &[], &mut 0).unwrap()
+            TapTree::from_template(
+                &template_of(tap_leaf.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         // Tree
@@ -1893,7 +2330,8 @@ mod tests {
         };
         assert_eq!(
             expected_tap_tree.clone(),
-            TapTree::from_template(&template_of(tap_tree), &mut 0, &[], &mut 0).unwrap()
+            TapTree::from_template(&template_of(tap_tree), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
     }
 
@@ -1907,21 +2345,21 @@ mod tests {
         let bare = Bare::new(ms_bare_check_pkk.clone()).unwrap();
         assert_eq!(
             bare.clone(),
-            Bare::from_template(&template_of(bare), &mut 0, &[], &mut 0).unwrap()
+            Bare::from_template(&template_of(bare), &mut 0, &[], &mut 0, &mut KeyMap::new()).unwrap()
         );
 
         // Pkh
         let pkh = Pkh::new(pk_full.clone()).unwrap();
         assert_eq!(
             pkh.clone(),
-            Pkh::from_template(&template_of(pkh), &mut 0, &[], &mut 0).unwrap()
+            Pkh::from_template(&template_of(pkh), &mut 0, &[], &mut 0, &mut KeyMap::new()).unwrap()
         );
 
         // Wpkh
         let wpkh = Wpkh::new(pk_full.clone()).unwrap();
         assert_eq!(
             wpkh.clone(),
-            Wpkh::from_template(&template_of(wpkh), &mut 0, &[], &mut 0).unwrap()
+            Wpkh::from_template(&template_of(wpkh), &mut 0, &[], &mut 0, &mut KeyMap::new()).unwrap()
         );
     }
 
@@ -1935,7 +2373,7 @@ mod tests {
         let sh_wpkh = Sh::new_with_wpkh(wpkh_inner.clone());
         assert_eq!(
             sh_wpkh.clone(),
-            Sh::from_template(&template_of(sh_wpkh), &mut 0, &[], &mut 0).unwrap()
+            Sh::from_template(&template_of(sh_wpkh), &mut 0, &[], &mut 0, &mut KeyMap::new()).unwrap()
         );
 
         // Sh(Wsh)
@@ -1944,7 +2382,7 @@ mod tests {
         let sh_wsh = Sh::new_with_wsh(wsh.clone());
         assert_eq!(
             sh_wsh.clone(),
-            Sh::from_template(&template_of(sh_wsh), &mut 0, &[], &mut 0).unwrap()
+            Sh::from_template(&template_of(sh_wsh), &mut 0, &[], &mut 0, &mut KeyMap::new()).unwrap()
         );
 
         // Sh(SortedMulti)
@@ -1954,7 +2392,14 @@ mod tests {
         let expected_sh_sortedmulti = Sh::new_sortedmulti(1, expected_pks).unwrap();
         assert_eq!(
             expected_sh_sortedmulti.clone(),
-            Sh::from_template(&template_of(sh_sortedmulti), &mut 0, &[], &mut 0).unwrap()
+            Sh::from_template(
+                &template_of(sh_sortedmulti),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         // Sh(Miniscript)
@@ -1962,7 +2407,7 @@ mod tests {
         let sh_ms = Sh::new(ms_sh.clone()).unwrap();
         assert_eq!(
             sh_ms.clone(),
-            Sh::from_template(&template_of(sh_ms), &mut 0, &[], &mut 0).unwrap()
+            Sh::from_template(&template_of(sh_ms), &mut 0, &[], &mut 0, &mut KeyMap::new()).unwrap()
         );
     }
 
@@ -1978,7 +2423,14 @@ mod tests {
         let expected_wsh_sortedmulti = Wsh::new_sortedmulti(1, expected_pks).unwrap();
         assert_eq!(
             expected_wsh_sortedmulti.clone(),
-            Wsh::from_template(&template_of(wsh_sortedmulti), &mut 0, &[], &mut 0).unwrap()
+            Wsh::from_template(
+                &template_of(wsh_sortedmulti),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         // Wsh(Miniscript)
@@ -1986,7 +2438,7 @@ mod tests {
         let wsh_ms = Wsh::new(ms_wsh.clone()).unwrap();
         assert_eq!(
             wsh_ms.clone(),
-            Wsh::from_template(&template_of(wsh_ms), &mut 0, &[], &mut 0).unwrap()
+            Wsh::from_template(&template_of(wsh_ms), &mut 0, &[], &mut 0, &mut KeyMap::new()).unwrap()
         );
     }
 
@@ -1998,7 +2450,14 @@ mod tests {
         let tr_no_tree = Tr::new(internal_key.clone(), None).unwrap();
         assert_eq!(
             tr_no_tree.clone(),
-            Tr::from_template(&template_of(tr_no_tree), &mut 0, &[], &mut 0).unwrap()
+            Tr::from_template(
+                &template_of(tr_no_tree),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         // Tr with TapTree
@@ -2007,7 +2466,14 @@ mod tests {
         let tr_with_tree = Tr::new(internal_key.clone(), Some(tap_tree.clone())).unwrap();
         assert_eq!(
             tr_with_tree.clone(),
-            Tr::from_template(&template_of(tr_with_tree), &mut 0, &[], &mut 0).unwrap()
+            Tr::from_template(
+                &template_of(tr_with_tree),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
     }
 
@@ -2028,8 +2494,14 @@ mod tests {
 
         assert_eq!(
             descriptor1.clone(),
-            Descriptor::from_template(&template_of(descriptor2.clone()), &mut 0, &[], &mut 0)
-                .unwrap()
+            Descriptor::from_template(
+                &template_of(descriptor2.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             descriptor2.clone(),
@@ -2037,7 +2509,8 @@ mod tests {
                 &template_of(descriptor2.clone()),
                 &mut 0,
                 &payload_of(descriptor2.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -2049,8 +2522,14 @@ mod tests {
 
         assert_eq!(
             descriptor1.clone(),
-            Descriptor::from_template(&template_of(descriptor2.clone()), &mut 0, &[], &mut 0)
-                .unwrap()
+            Descriptor::from_template(
+                &template_of(descriptor2.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             descriptor2.clone(),
@@ -2058,7 +2537,8 @@ mod tests {
                 &template_of(descriptor2.clone()),
                 &mut 0,
                 &payload_of(descriptor2.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -2068,7 +2548,14 @@ mod tests {
         let descriptor = Descriptor::Sh(sh_ms);
         assert_eq!(
             descriptor.clone(),
-            Descriptor::from_template(&template_of(descriptor), &mut 0, &[], &mut 0).unwrap()
+            Descriptor::from_template(
+                &template_of(descriptor),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let wpkh1 = Wpkh::new(pk1.clone()).unwrap();
@@ -2078,8 +2565,14 @@ mod tests {
 
         assert_eq!(
             descriptor1.clone(),
-            Descriptor::from_template(&template_of(descriptor2.clone()), &mut 0, &[], &mut 0)
-                .unwrap()
+            Descriptor::from_template(
+                &template_of(descriptor2.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             descriptor2.clone(),
@@ -2087,7 +2580,8 @@ mod tests {
                 &template_of(descriptor2.clone()),
                 &mut 0,
                 &payload_of(descriptor2.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -2097,7 +2591,14 @@ mod tests {
         let descriptor = Descriptor::Wsh(wsh_ms);
         assert_eq!(
             descriptor.clone(),
-            Descriptor::from_template(&template_of(descriptor), &mut 0, &[], &mut 0).unwrap()
+            Descriptor::from_template(
+                &template_of(descriptor),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let tr1 = Tr::new(pk1.clone(), None).unwrap();
@@ -2107,8 +2608,14 @@ mod tests {
 
         assert_eq!(
             descriptor1.clone(),
-            Descriptor::from_template(&template_of(descriptor2.clone()), &mut 0, &[], &mut 0)
-                .unwrap()
+            Descriptor::from_template(
+                &template_of(descriptor2.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
         assert_eq!(
             descriptor2.clone(),
@@ -2116,7 +2623,8 @@ mod tests {
                 &template_of(descriptor2.clone()),
                 &mut 0,
                 &payload_of(descriptor2.clone()),
-                &mut 0
+                &mut 0,
+                &mut KeyMap::new()
             )
             .unwrap()
         );
@@ -2132,7 +2640,7 @@ mod tests {
         let expected_size = input.len();
         input.extend(vec![0, 1, 2, 3]);
 
-        assert_eq!(decode_template(&input), Ok((descriptor, expected_size)));
+        assert_eq!(decode_template(&input), Ok((descriptor, KeyMap::new(), expected_size)));
     }
 
     #[test]
@@ -2144,6 +2652,6 @@ mod tests {
         let input = template_of(descriptor.clone());
         let payload = payload_of(descriptor.clone());
 
-        assert_eq!(decode_with_payload(&input, &payload), Ok(descriptor));
+        assert_eq!(decode_with_payload(&input, &payload), Ok((descriptor, KeyMap::new())));
     }
 }

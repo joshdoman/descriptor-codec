@@ -19,6 +19,10 @@ pub fn pk_at_index(index: u32) -> SecpPublicKey {
     SecpPublicKey::from_secret_key(&secp, &sk_at_index(index))
 }
 
+pub fn sk() -> SecretKey {
+    sk_at_index(1)
+}
+
 pub fn pk() -> SecpPublicKey {
     pk_at_index(1)
 }

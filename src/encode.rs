@@ -473,9 +473,8 @@ mod tests {
     use super::*;
     use crate::dummy;
     use bitcoin::{
-        NetworkKind, XOnlyPublicKey,
+        NetworkKind, PrivateKey, PublicKey, XOnlyPublicKey,
         bip32::{DerivationPath, Fingerprint},
-        key::{PrivateKey, PublicKey},
     };
     use miniscript::{
         BareCtx, Legacy, Miniscript, Segwitv0, Tap,

@@ -23,19 +23,18 @@
 //! use miniscript::descriptor::{Descriptor, DescriptorPublicKey};
 //!
 //! // Create a descriptor - a 2-of-3 multisig in this example
-//! let desc_str = "wsh(sortedmulti(2,\
+//! let descriptor = "wsh(sortedmulti(2,\
 //!     03a0434d9e47f3c86235477c7b1ae6ae5d3442d49b1943c2b752a68e2a47e247c7,\
 //!     036d2b085e9e382ed10b69fc311a03f8641ccfff21574de0927513a49d9a688a00,\
 //!     02e8445082a72f29b75ca48748a914df60622a609cacfce8ed0e35804560741d29\
-//! ))";
-//! let descriptor = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
+//! ))#hfj7wz7l";
 //!
 //! // Encode the descriptor
-//! let encoded_descriptor = encode(descriptor.clone());
+//! let encoded_descriptor = encode(descriptor).unwrap();
 //!
 //! // Recover the original descriptor
 //! let decoded_descriptor = decode(&encoded_descriptor).unwrap();
-//! assert_eq!(descriptor.to_string(), decoded_descriptor.to_string());
+//! assert_eq!(descriptor.to_string(), decoded_descriptor);
 //! ```
 //!
 
@@ -61,7 +60,7 @@ mod varint;
 pub use decode::Error;
 
 use bitcoin::secp256k1::Secp256k1;
-use miniscript::{Descriptor, DescriptorPublicKey};
+use miniscript::Descriptor;
 
 /// Parses and encodes a Bitcoin descriptor
 pub fn encode(s: &str) -> Result<Vec<u8>, miniscript::Error> {
@@ -72,8 +71,9 @@ pub fn encode(s: &str) -> Result<Vec<u8>, miniscript::Error> {
     Ok(template)
 }
 
-/// Decodes a Bitcoin descriptor from bytes
-pub fn decode(bytes: &[u8]) -> Result<Descriptor<DescriptorPublicKey>, Error> {
-    let (_, size) = decode::decode_template(bytes)?;
-    decode::decode_with_payload(&bytes[..size], &bytes[size..])
+/// Decodes a Bitcoin descriptor
+pub fn decode(bytes: &[u8]) -> Result<String, Error> {
+    let (_, _, size) = decode::decode_template(bytes)?;
+    let (descriptor, key_map) = decode::decode_with_payload(&bytes[..size], &bytes[size..])?;
+    Ok(descriptor.to_string_with_secret(&key_map))
 }
