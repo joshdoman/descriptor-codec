@@ -6,15 +6,15 @@ use super::tag::Tag;
 use super::varint;
 
 use bitcoin::{
-    bip32::{ChildNumber, DerivationPath, Xpub},
+    bip32::{ChildNumber, DerivationPath, Xpub, Xpriv},
     hashes::Hash,
 };
 use miniscript::{
     Miniscript, ScriptContext, Threshold,
     descriptor::{
-        Bare, DerivPaths, Descriptor, DescriptorMultiXKey, DescriptorPublicKey, DescriptorXKey,
-        KeyMap, Pkh, Sh, ShInner, SinglePubKey, SortedMultiVec, TapTree, Tr, Wildcard, Wpkh, Wsh,
-        WshInner,
+        Bare, DerivPaths, Descriptor, DescriptorMultiXKey, DescriptorPublicKey,
+        DescriptorSecretKey, DescriptorXKey, KeyMap, Pkh, Sh, ShInner, SinglePubKey,
+        SortedMultiVec, TapTree, Tr, Wildcard, Wpkh, Wsh, WshInner,
     },
     miniscript::decode::Terminal,
 };
@@ -54,7 +54,9 @@ impl EncodeTemplate for Sh<DescriptorPublicKey> {
         template.push(Tag::Sh.value());
 
         match self.as_inner() {
-            ShInner::SortedMulti(sortedmulti) => sortedmulti.encode_template(template, payload, key_map),
+            ShInner::SortedMulti(sortedmulti) => {
+                sortedmulti.encode_template(template, payload, key_map)
+            }
             ShInner::Wsh(wsh) => wsh.encode_template(template, payload, key_map),
             ShInner::Wpkh(wpkh) => wpkh.encode_template(template, payload, key_map),
             ShInner::Ms(ms) => ms.encode_template(template, payload, key_map),
@@ -67,7 +69,9 @@ impl EncodeTemplate for Wsh<DescriptorPublicKey> {
         template.push(Tag::Wsh.value());
 
         match self.as_inner() {
-            WshInner::SortedMulti(sortedmulti) => sortedmulti.encode_template(template, payload, key_map),
+            WshInner::SortedMulti(sortedmulti) => {
+                sortedmulti.encode_template(template, payload, key_map)
+            }
             WshInner::Ms(ms) => ms.encode_template(template, payload, key_map),
         };
     }
@@ -77,7 +81,8 @@ impl EncodeTemplate for Tr<DescriptorPublicKey> {
     fn encode_template(&self, template: &mut Vec<u8>, payload: &mut Vec<u8>, key_map: &KeyMap) {
         template.push(Tag::Tr.value());
 
-        self.internal_key().encode_template(template, payload, key_map);
+        self.internal_key()
+            .encode_template(template, payload, key_map);
 
         if let Some(tap_tree) = self.tap_tree() {
             tap_tree.encode_template(template, payload, key_map);
@@ -284,6 +289,11 @@ impl<T: EncodeTemplate, const MAX: usize> EncodeTemplate for Threshold<T, MAX> {
 
 impl EncodeTemplate for DescriptorPublicKey {
     fn encode_template(&self, template: &mut Vec<u8>, payload: &mut Vec<u8>, key_map: &KeyMap) {
+        if let Some(secret_key) = key_map.get(self) {
+            secret_key.encode_template(template, payload, key_map);
+            return;
+        }
+
         let (tag, origin) = match self.clone() {
             DescriptorPublicKey::XPub(xpub) => (Tag::XPub, xpub.origin),
             DescriptorPublicKey::MultiXPub(xpub) => (Tag::MultiXPub, xpub.origin),
@@ -315,8 +325,43 @@ impl EncodeTemplate for DescriptorPublicKey {
 
         match self {
             DescriptorPublicKey::XPub(xpub) => xpub.encode_template(template, payload, key_map),
-            DescriptorPublicKey::MultiXPub(xpub) => xpub.encode_template(template, payload, key_map),
-            DescriptorPublicKey::Single(single) => single.key.encode_template(template, payload, key_map),
+            DescriptorPublicKey::MultiXPub(xpub) => {
+                xpub.encode_template(template, payload, key_map)
+            }
+            DescriptorPublicKey::Single(single) => {
+                single.key.encode_template(template, payload, key_map)
+            }
+        }
+    }
+}
+
+impl EncodeTemplate for DescriptorSecretKey {
+    fn encode_template(&self, template: &mut Vec<u8>, payload: &mut Vec<u8>, key_map: &KeyMap) {
+        let (tag, origin) = match self.clone() {
+            DescriptorSecretKey::XPrv(xprv) => (Tag::XPriv, xprv.origin),
+            DescriptorSecretKey::MultiXPrv(xprv) => (Tag::MultiXPriv, xprv.origin),
+            DescriptorSecretKey::Single(single) => (Tag::SinglePriv, single.origin)
+        };
+
+        template.push(tag.value());
+
+        if let Some((fingerprint, derivation_path)) = origin {
+            template.push(Tag::Origin.value());
+            payload.extend(fingerprint.as_bytes().to_vec());
+
+            derivation_path.encode_template(template, payload, key_map);
+        } else {
+            template.push(Tag::NoOrigin.value());
+        }
+
+        match self {
+            DescriptorSecretKey::XPrv(xprv) => xprv.encode_template(template, payload, key_map),
+            DescriptorSecretKey::MultiXPrv(xprv) => {
+                xprv.encode_template(template, payload, key_map)
+            }
+            DescriptorSecretKey::Single(single) => {
+                payload.extend(single.key.to_bytes());
+            }
         }
     }
 }
@@ -331,7 +376,7 @@ impl EncodeTemplate for DerivationPath {
 }
 
 impl EncodeTemplate for ChildNumber {
-    fn encode_template(&self, template: &mut Vec<u8>, _payload: &mut Vec<u8>, key_map: &KeyMap) {
+    fn encode_template(&self, template: &mut Vec<u8>, _payload: &mut Vec<u8>, _key_map: &KeyMap) {
         let value = match *self {
             ChildNumber::Normal { index } => (index as u128) << 1,
             ChildNumber::Hardened { index } => 1 + ((index as u128) << 1),
@@ -342,7 +387,7 @@ impl EncodeTemplate for ChildNumber {
 }
 
 impl EncodeTemplate for SinglePubKey {
-    fn encode_template(&self, _template: &mut Vec<u8>, payload: &mut Vec<u8>, key_map: &KeyMap) {
+    fn encode_template(&self, _template: &mut Vec<u8>, payload: &mut Vec<u8>, _key_map: &KeyMap) {
         match self {
             SinglePubKey::FullKey(pk) => {
                 payload.extend(pk.to_bytes());
@@ -356,7 +401,8 @@ impl EncodeTemplate for SinglePubKey {
 
 impl EncodeTemplate for DescriptorXKey<Xpub> {
     fn encode_template(&self, template: &mut Vec<u8>, payload: &mut Vec<u8>, key_map: &KeyMap) {
-        self.derivation_path.encode_template(template, payload, key_map);
+        self.derivation_path
+            .encode_template(template, payload, key_map);
         self.wildcard.encode_template(template, payload, key_map);
 
         payload.extend(self.xkey.encode().to_vec());
@@ -365,7 +411,28 @@ impl EncodeTemplate for DescriptorXKey<Xpub> {
 
 impl EncodeTemplate for DescriptorMultiXKey<Xpub> {
     fn encode_template(&self, template: &mut Vec<u8>, payload: &mut Vec<u8>, key_map: &KeyMap) {
-        self.derivation_paths.encode_template(template, payload, key_map);
+        self.derivation_paths
+            .encode_template(template, payload, key_map);
+        self.wildcard.encode_template(template, payload, key_map);
+
+        payload.extend(self.xkey.encode().to_vec());
+    }
+}
+
+impl EncodeTemplate for DescriptorXKey<Xpriv> {
+    fn encode_template(&self, template: &mut Vec<u8>, payload: &mut Vec<u8>, key_map: &KeyMap) {
+        self.derivation_path
+            .encode_template(template, payload, key_map);
+        self.wildcard.encode_template(template, payload, key_map);
+
+        payload.extend(self.xkey.encode().to_vec());
+    }
+}
+
+impl EncodeTemplate for DescriptorMultiXKey<Xpriv> {
+    fn encode_template(&self, template: &mut Vec<u8>, payload: &mut Vec<u8>, key_map: &KeyMap) {
+        self.derivation_paths
+            .encode_template(template, payload, key_map);
         self.wildcard.encode_template(template, payload, key_map);
 
         payload.extend(self.xkey.encode().to_vec());
@@ -383,7 +450,7 @@ impl EncodeTemplate for DerivPaths {
 }
 
 impl EncodeTemplate for Wildcard {
-    fn encode_template(&self, template: &mut Vec<u8>, _payload: &mut Vec<u8>, key_map: &KeyMap) {
+    fn encode_template(&self, template: &mut Vec<u8>, _payload: &mut Vec<u8>, _key_map: &KeyMap) {
         let tag = match self {
             Wildcard::None => Tag::NoWildcard,
             Wildcard::Unhardened => Tag::UnhardenedWildcard,
