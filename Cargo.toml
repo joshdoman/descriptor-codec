@@ -1,12 +1,12 @@
 [package]
 name = "descriptor-codec"
 version = "0.1.0"
-description = "Encrypt Bitcoin wallet descriptors such that only authorized spenders can decrypt"
-keywords = [ "crypto", "bitcoin", "descriptor", "miniscript", "encrypt" ]
+description = "Encode and decode Bitcoin wallet descriptors with 30-40% size reduction"
+keywords = [ "bitcoin", "descriptor", "miniscript", "codec", "encode" ]
 authors = ["Joshua Doman <joshsdoman@gmail.com>"]
 license = "CC0-1.0"
-homepage = "https://github.com/joshdoman/descriptor-encrypt"
-repository = "https://github.com/joshdoman/descriptor-encrypt"
+homepage = "https://github.com/joshdoman/descriptor-codec"
+repository = "https://github.com/joshdoman/descriptor-codec"
 edition = "2024"
 readme = "README.md"
 rust-version = "1.85.0"
