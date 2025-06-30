@@ -471,180 +471,13 @@ impl EncodeTemplate for Wildcard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dummy;
-    use bitcoin::{
-        NetworkKind, PrivateKey, PublicKey, XOnlyPublicKey,
-        bip32::{DerivationPath, Fingerprint},
-    };
-    use miniscript::{
-        BareCtx, Legacy, Miniscript, Segwitv0, Tap,
-        descriptor::{SinglePriv, SinglePub},
-    };
-    use std::str::FromStr;
-
-    // Helper to create a DerivationPath from a string
-    fn dp_from_str(s: &str) -> DerivationPath {
-        DerivationPath::from_str(s).unwrap()
-    }
-
-    // Helper to create a Fingerprint from a hex string
-    fn fp_from_str(s: &str) -> Fingerprint {
-        Fingerprint::from_hex(s).unwrap()
-    }
-
-    // Helper to create a simple DescriptorPublicKey (Single, FullKey, Compressed, No Origin)
-    fn create_dpk_single_compressed_no_origin(index: u32) -> DescriptorPublicKey {
-        let pk = PublicKey {
-            inner: dummy::pk_at_index(index),
-            compressed: true,
-        };
-        DescriptorPublicKey::Single(SinglePub {
-            key: SinglePubKey::FullKey(pk),
-            origin: None,
-        })
-    }
-
-    // Helper to create an XOnly DescriptorPublicKey
-    fn create_dpk_xonly_no_origin(index: u32) -> (XOnlyPublicKey, DescriptorPublicKey) {
-        let xonly_pk = XOnlyPublicKey::from(dummy::pk_at_index(index));
-        let dpk = DescriptorPublicKey::Single(SinglePub {
-            key: SinglePubKey::XOnly(xonly_pk),
-            origin: None,
-        });
-
-        (xonly_pk, dpk)
-    }
-
-    // Helper to generate a DescriptorPublicKey::Single(FullKey)
-    fn create_dpk_single_full(
-        compressed: bool,
-        origin: Option<(Fingerprint, DerivationPath)>,
-        index: u32,
-    ) -> (PublicKey, DescriptorPublicKey) {
-        let pk = PublicKey {
-            inner: dummy::pk_at_index(index),
-            compressed,
-        };
-        let dpk = DescriptorPublicKey::Single(SinglePub {
-            key: SinglePubKey::FullKey(pk),
-            origin,
-        });
-
-        (pk, dpk)
-    }
-
-    // Helper to generate a DescriptorPublicKey::XPub
-    fn create_dpk_xpub(
-        origin: Option<(Fingerprint, DerivationPath)>,
-        xpub_derivation_path_str: &str,
-        wildcard: Wildcard,
-    ) -> (Xpub, DescriptorPublicKey) {
-        let xkey = dummy::xpub();
-        let dpk = DescriptorPublicKey::XPub(DescriptorXKey {
-            origin,
-            xkey,
-            derivation_path: dp_from_str(xpub_derivation_path_str),
-            wildcard,
-        });
-
-        (xkey, dpk)
-    }
-
-    // Helper to generate a DescriptorPublicKey::MultiXPub
-    fn create_dpk_multixpub(
-        origin: Option<(Fingerprint, DerivationPath)>,
-        xpub_derivation_paths_str: &[&str],
-        wildcard: Wildcard,
-    ) -> (Xpub, DescriptorPublicKey) {
-        let paths: Vec<DerivationPath> = xpub_derivation_paths_str
-            .iter()
-            .map(|s| dp_from_str(s))
-            .collect();
-        let xkey = dummy::xpub();
-        let dpk = DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
-            origin,
-            xkey,
-            derivation_paths: DerivPaths::new(paths).unwrap(),
-            wildcard,
-        });
-
-        (xkey, dpk)
-    }
-
-    // Helper to generate a DescriptorSecretKey::Single
-    fn create_dsk_single(
-        compressed: bool,
-        origin: Option<(Fingerprint, DerivationPath)>,
-        index: u32,
-    ) -> (PrivateKey, DescriptorSecretKey) {
-        let sk = dummy::sk_at_index(index);
-        let key = if compressed {
-            PrivateKey::new(sk, NetworkKind::Main)
-        } else {
-            PrivateKey::new_uncompressed(sk, NetworkKind::Main)
-        };
-        let dsk = DescriptorSecretKey::Single(SinglePriv { key, origin });
-
-        (key, dsk)
-    }
-
-    // Helper to generate a DescriptorSecretKey::XPub
-    fn create_dsk_xpriv(
-        origin: Option<(Fingerprint, DerivationPath)>,
-        xpriv_derivation_paths_str: &str,
-        wildcard: Wildcard,
-    ) -> (Xpriv, DescriptorSecretKey) {
-        let xkey = dummy::xpriv();
-        let dsk = DescriptorSecretKey::XPrv(DescriptorXKey {
-            origin,
-            xkey,
-            derivation_path: dp_from_str(xpriv_derivation_paths_str),
-            wildcard,
-        });
-
-        (xkey, dsk)
-    }
-
-    // Helper to generate a DescriptorSecretKey::MultiXPub
-    fn create_dsk_multixpriv(
-        origin: Option<(Fingerprint, DerivationPath)>,
-        xpriv_derivation_paths_str: &[&str],
-        wildcard: Wildcard,
-    ) -> (Xpriv, DescriptorSecretKey) {
-        let paths: Vec<DerivationPath> = xpriv_derivation_paths_str
-            .iter()
-            .map(|s| dp_from_str(s))
-            .collect();
-        let xkey = dummy::xpriv();
-        let dsk = DescriptorSecretKey::MultiXPrv(DescriptorMultiXKey {
-            origin,
-            xkey,
-            derivation_paths: DerivPaths::new(paths).unwrap(),
-            wildcard,
-        });
-
-        (xkey, dsk)
-    }
-
-    /// Helper to convert any EncodeTemplate to template bytes
-    fn template_of<T: EncodeTemplate>(t: T) -> Vec<u8> {
-        let mut template = Vec::new();
-        let mut payload = Vec::new();
-        t.encode_template(&mut template, &mut payload, &KeyMap::new());
-        template
-    }
+    use crate::{dummy, test_helpers::*};
+    use bitcoin::bip32::DerivationPath;
+    use miniscript::{BareCtx, Legacy, Miniscript, Segwitv0, Tap};
 
     /// Helper to check equality of any EncodeTemplate and template bytes
     fn assert_eq_template<T: EncodeTemplate>(t: T, expected: Vec<u8>) {
         assert_eq!(template_of(t), expected);
-    }
-
-    /// Helper to convert any EncodeTemplate to payload bytes
-    fn payload_of<T: EncodeTemplate>(t: T) -> Vec<u8> {
-        let mut template = Vec::new();
-        let mut payload = Vec::new();
-        t.encode_template(&mut template, &mut payload, &KeyMap::new());
-        payload
     }
 
     /// Helper to check equality of any EncodeTemplate and template and payload bytes
@@ -778,7 +611,8 @@ mod tests {
 
         // XPub, No Origin, specific derivation path, NoWildcard
         let xpub_path_str = "m/0/0";
-        let (xpub1, dpk_xpub1) = create_dpk_xpub(None, xpub_path_str, Wildcard::None);
+        let (xpub1, dpk_xpub1) =
+            create_dpk_xpub(None, xpub_path_str, dummy::xpub(), Wildcard::None);
         let expected_template = [
             vec![Tag::XPub.value(), Tag::NoOrigin.value()],
             template_of(dp_from_str(xpub_path_str)),
@@ -791,6 +625,7 @@ mod tests {
         let (xpub2, dpk_xpub2) = create_dpk_xpub(
             Some((origin_fp, origin_path.clone())),
             "m/1",
+            dummy::xpub(),
             Wildcard::Unhardened,
         );
         let expected_template = [
@@ -805,8 +640,12 @@ mod tests {
 
         // MultiXPub, No Origin, specific derivation paths, HardenedWildcard
         let multixpub_paths_str = ["m/0/0", "m/0/1"];
-        let (xpub1, dpk_multixpub1) =
-            create_dpk_multixpub(None, &multixpub_paths_str, Wildcard::Hardened);
+        let (xpub1, dpk_multixpub1) = create_dpk_multixpub(
+            None,
+            &multixpub_paths_str,
+            dummy::xpub(),
+            Wildcard::Hardened,
+        );
         let paths =
             DerivPaths::new(multixpub_paths_str.iter().map(|s| dp_from_str(s)).collect()).unwrap();
         let expected_dpk_multixpub1 = [
@@ -828,7 +667,7 @@ mod tests {
         let (_, dpk) = create_dpk_single_full(true, None, 1);
         let mut km = KeyMap::new();
 
-        // Single FullKey Compressed, No Origin
+        // Single Key Compressed, No Origin
         let (sk1, dsk1) = create_dsk_single(true, None, 1);
         km.insert(dpk.clone(), dsk1.clone());
         let expected_template_sk1 = [vec![
@@ -843,7 +682,7 @@ mod tests {
             &km,
         );
 
-        // Single FullKey Uncompressed, No Origin
+        // Single Key Uncompressed, No Origin
         let (sk2, dsk2) = create_dsk_single(false, None, 2);
         km.insert(dpk.clone(), dsk2.clone());
         let expected_template_sk2 = [vec![
@@ -858,7 +697,7 @@ mod tests {
             &km,
         );
 
-        // Single FullKey Compressed, With Origin
+        // Single Key Compressed, With Origin
         let origin_fp = fp_from_str("12345678");
         let origin_path = dp_from_str("m/84h/0h/0h");
         let (sk3, dsk3) = create_dsk_single(true, Some((origin_fp, origin_path.clone())), 3);
@@ -878,7 +717,8 @@ mod tests {
 
         // XPriv, No Origin, specific derivation path, NoWildcard
         let xpriv_path_str = "m/0/0";
-        let (xpriv1, dsk_xpriv1) = create_dsk_xpriv(None, xpriv_path_str, Wildcard::None);
+        let (xpriv1, dsk_xpriv1) =
+            create_dsk_xpriv(None, xpriv_path_str, dummy::xpriv(), Wildcard::None);
         km.insert(dpk.clone(), dsk_xpriv1.clone());
         let expected_template = [
             vec![Tag::XPriv.value(), Tag::NoOrigin.value()],
@@ -897,6 +737,7 @@ mod tests {
         let (xpriv2, dsk_xpriv2) = create_dsk_xpriv(
             Some((origin_fp, origin_path.clone())),
             "m/1",
+            dummy::xpriv(),
             Wildcard::Unhardened,
         );
         km.insert(dpk.clone(), dsk_xpriv2.clone());
@@ -917,8 +758,12 @@ mod tests {
 
         // MultiXPub, No Origin, specific derivation paths, HardenedWildcard
         let multixpriv_paths_str = ["m/0/0", "m/0/1"];
-        let (xpriv1, dsk_multixpriv1) =
-            create_dsk_multixpriv(None, &multixpriv_paths_str, Wildcard::Hardened);
+        let (xpriv1, dsk_multixpriv1) = create_dsk_multixpriv(
+            None,
+            &multixpriv_paths_str,
+            dummy::xpriv(),
+            Wildcard::Hardened,
+        );
         km.insert(dpk.clone(), dsk_multixpriv1.clone());
         let paths = DerivPaths::new(
             multixpriv_paths_str

@@ -2,7 +2,7 @@
 
 //! # Descriptor Decode
 
-use super::{tag::Tag, varint, *};
+use super::{tag::Tag, test_helpers, varint, *};
 use bitcoin::{
     NetworkKind, PrivateKey, PublicKey, XOnlyPublicKey,
     bip32::{ChildNumber, DerivationPath, Fingerprint, Xpriv, Xpub},
@@ -879,9 +879,11 @@ impl FromTemplate for DescriptorPublicKey {
 
                 // Convert secret key to public key
                 let secp = Secp256k1::new();
-                let public_key = secret_key.to_public(&secp).map_err(|e| {
-                    Error::InvalidPayload(*index, format!("Unable to derive public key: {}", e))
-                })?;
+                let public_key = secret_key.to_public(&secp).unwrap_or(
+                    // multi-xpriv cannot be converted to a public key, so instead
+                    // use a dummy public key indexed to the map size
+                    test_helpers::create_dpk_single_compressed_no_origin(1 + key_map.len() as u32),
+                );
 
                 // Insert key mapping
                 key_map.insert(public_key.clone(), secret_key);
@@ -1427,112 +1429,8 @@ impl FromPayload for Hash256 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dummy;
-    use crate::encode::*;
-    use bitcoin::{
-        XOnlyPublicKey,
-        bip32::{DerivationPath, Fingerprint},
-        key::PublicKey,
-    };
-    use miniscript::{BareCtx, Legacy, Miniscript, Segwitv0, Tap, descriptor::SinglePub};
+    use crate::{dummy, test_helpers::*};
     use std::str::FromStr;
-
-    // Helper to create a DerivationPath from a string
-    fn dp_from_str(s: &str) -> DerivationPath {
-        DerivationPath::from_str(s).unwrap()
-    }
-
-    // Helper to create a Fingerprint from a hex string
-    fn fp_from_str(s: &str) -> Fingerprint {
-        Fingerprint::from_hex(s).unwrap()
-    }
-
-    // Helper to create a simple DescriptorPublicKey (Single, FullKey, Compressed, No Origin)
-    fn create_dpk_single_compressed_no_origin(index: u32) -> DescriptorPublicKey {
-        let pk = PublicKey {
-            inner: dummy::pk_at_index(index),
-            compressed: true,
-        };
-        DescriptorPublicKey::Single(SinglePub {
-            key: SinglePubKey::FullKey(pk),
-            origin: None,
-        })
-    }
-
-    // Helper to create an XOnly DescriptorPublicKey
-    fn create_dpk_xonly_no_origin(index: u32) -> DescriptorPublicKey {
-        let xonly_pk = XOnlyPublicKey::from(dummy::pk_at_index(index));
-        DescriptorPublicKey::Single(SinglePub {
-            key: SinglePubKey::XOnly(xonly_pk),
-            origin: None,
-        })
-    }
-
-    // Helper to generate a DescriptorPublicKey::Single(FullKey)
-    fn create_dpk_single_full(
-        compressed: bool,
-        origin: Option<(Fingerprint, DerivationPath)>,
-        index: u32,
-    ) -> DescriptorPublicKey {
-        let pk = PublicKey {
-            inner: dummy::pk_at_index(index),
-            compressed,
-        };
-        DescriptorPublicKey::Single(SinglePub {
-            key: SinglePubKey::FullKey(pk),
-            origin,
-        })
-    }
-
-    // Helper to generate a DescriptorPublicKey::XPub
-    fn create_dpk_xpub(
-        origin: Option<(Fingerprint, DerivationPath)>,
-        xpub_derivation_path_str: &str,
-        xkey: Xpub,
-        wildcard: Wildcard,
-    ) -> DescriptorPublicKey {
-        DescriptorPublicKey::XPub(DescriptorXKey {
-            origin,
-            xkey,
-            derivation_path: dp_from_str(xpub_derivation_path_str),
-            wildcard,
-        })
-    }
-
-    // Helper to generate a DescriptorPublicKey::MultiXPub
-    fn create_dpk_multixpub(
-        origin: Option<(Fingerprint, DerivationPath)>,
-        xpub_derivation_paths_str: &[&str],
-        xkey: Xpub,
-        wildcard: Wildcard,
-    ) -> DescriptorPublicKey {
-        let paths: Vec<DerivationPath> = xpub_derivation_paths_str
-            .iter()
-            .map(|s| dp_from_str(s))
-            .collect();
-        DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
-            origin,
-            xkey,
-            derivation_paths: DerivPaths::new(paths).unwrap(),
-            wildcard,
-        })
-    }
-
-    /// Helper to convert any EncodeTemplate to template bytes
-    fn template_of<T: EncodeTemplate>(t: T) -> Vec<u8> {
-        let mut template = Vec::new();
-        let mut payload = Vec::new();
-        t.encode_template(&mut template, &mut payload, &mut KeyMap::new());
-        template
-    }
-
-    /// Helper to convert any EncodeTemplate to template bytes
-    fn payload_of<T: EncodeTemplate>(t: T) -> Vec<u8> {
-        let mut template = Vec::new();
-        let mut payload = Vec::new();
-        t.encode_template(&mut template, &mut payload, &mut KeyMap::new());
-        payload
-    }
 
     // Generic Miniscript helpers
     type TerminalBare = Terminal<DescriptorPublicKey, BareCtx>;
@@ -1602,16 +1500,28 @@ mod tests {
         let dp_0 = dp_from_str("m/0");
         assert_eq!(
             dp_0.clone(),
-            DerivationPath::from_template(&template_of(dp_0), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            DerivationPath::from_template(
+                &template_of(dp_0),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         // Path: "m/1'"
         let dp_1h = dp_from_str("m/1'");
         assert_eq!(
             dp_1h.clone(),
-            DerivationPath::from_template(&template_of(dp_1h), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            DerivationPath::from_template(
+                &template_of(dp_1h),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         // Path: "m/42/23h/0/1h"
@@ -1666,11 +1576,11 @@ mod tests {
     #[test]
     fn test_descriptor_public_key() {
         // Single FullKey Compressed, No Origin
-        let pk1 = create_dpk_single_full(true, None, 2);
+        let (_, dpk1) = create_dpk_single_full(true, None, 2);
         assert_eq!(
-            create_dpk_single_full(true, None, 1),
+            create_dpk_single_full(true, None, 1).1,
             DescriptorPublicKey::from_template(
-                &template_of(pk1.clone()),
+                &template_of(dpk1.clone()),
                 &mut 0,
                 &[],
                 &mut 0,
@@ -1679,11 +1589,11 @@ mod tests {
             .unwrap()
         );
         assert_eq!(
-            pk1.clone(),
+            dpk1.clone(),
             DescriptorPublicKey::from_template(
-                &template_of(pk1.clone()),
+                &template_of(dpk1.clone()),
                 &mut 0,
-                &payload_of(pk1.clone()),
+                &payload_of(dpk1.clone()),
                 &mut 0,
                 &mut KeyMap::new()
             )
@@ -1691,11 +1601,11 @@ mod tests {
         );
 
         // Single FullKey Uncompressed, No Origin
-        let pk2 = create_dpk_single_full(false, None, 2);
+        let (_, dpk2) = create_dpk_single_full(false, None, 2);
         assert_eq!(
-            create_dpk_single_full(false, None, 1),
+            create_dpk_single_full(false, None, 1).1,
             DescriptorPublicKey::from_template(
-                &template_of(pk2.clone()),
+                &template_of(dpk2.clone()),
                 &mut 0,
                 &[],
                 &mut 0,
@@ -1704,11 +1614,11 @@ mod tests {
             .unwrap()
         );
         assert_eq!(
-            pk2.clone(),
+            dpk2.clone(),
             DescriptorPublicKey::from_template(
-                &template_of(pk2.clone()),
+                &template_of(dpk2.clone()),
                 &mut 0,
-                &payload_of(pk2.clone()),
+                &payload_of(dpk2.clone()),
                 &mut 0,
                 &mut KeyMap::new()
             )
@@ -1716,11 +1626,11 @@ mod tests {
         );
 
         // Single XOnlyKey, No Origin
-        let pk_xonly = create_dpk_xonly_no_origin(2);
+        let (_, dpk_xonly) = create_dpk_xonly_no_origin(2);
         assert_eq!(
-            create_dpk_xonly_no_origin(1),
+            create_dpk_xonly_no_origin(1).1,
             DescriptorPublicKey::from_template(
-                &template_of(pk_xonly.clone()),
+                &template_of(dpk_xonly.clone()),
                 &mut 0,
                 &[],
                 &mut 0,
@@ -1729,11 +1639,11 @@ mod tests {
             .unwrap()
         );
         assert_eq!(
-            pk_xonly.clone(),
+            dpk_xonly.clone(),
             DescriptorPublicKey::from_template(
-                &template_of(pk_xonly.clone()),
+                &template_of(dpk_xonly.clone()),
                 &mut 0,
-                &payload_of(pk_xonly.clone()),
+                &payload_of(dpk_xonly.clone()),
                 &mut 0,
                 &mut KeyMap::new()
             )
@@ -1743,11 +1653,11 @@ mod tests {
         // Single FullKey Compressed, With Origin
         let origin_fp = fp_from_str("12345678");
         let origin_path = dp_from_str("m/84h/0h/0h");
-        let pk3 = create_dpk_single_full(true, Some((origin_fp, origin_path.clone())), 3);
+        let (_, dpk3) = create_dpk_single_full(true, Some((origin_fp, origin_path.clone())), 3);
         assert_eq!(
-            create_dpk_single_full(true, Some((dummy::fp(), origin_path.clone())), 1),
+            create_dpk_single_full(true, Some((dummy::fp(), origin_path.clone())), 1).1,
             DescriptorPublicKey::from_template(
-                &template_of(pk3.clone()),
+                &template_of(dpk3.clone()),
                 &mut 0,
                 &[],
                 &mut 0,
@@ -1756,11 +1666,11 @@ mod tests {
             .unwrap()
         );
         assert_eq!(
-            pk3.clone(),
+            dpk3.clone(),
             DescriptorPublicKey::from_template(
-                &template_of(pk3.clone()),
+                &template_of(dpk3.clone()),
                 &mut 0,
-                &payload_of(pk3.clone()),
+                &payload_of(dpk3.clone()),
                 &mut 0,
                 &mut KeyMap::new()
             )
@@ -1770,9 +1680,9 @@ mod tests {
         // XPub, No Origin, specific derivation path, NoWildcard
         let xpub_path_str = "m/0/0";
         let xpub = Xpub::from_str("xpub6DYotmPf2kXFYhJMFDpfydjiXG1RzmH1V7Fnn2Z38DgN2oSYruczMyTFZZPz6yXq47Re8anhXWGj4yMzPTA3bjPDdpA96TLUbMehrH3sBna").unwrap();
-        let dpk_xpub1 = create_dpk_xpub(None, xpub_path_str, xpub, Wildcard::None);
+        let (_, dpk_xpub1) = create_dpk_xpub(None, xpub_path_str, xpub, Wildcard::None);
         assert_eq!(
-            create_dpk_xpub(None, xpub_path_str, dummy::xpub(), Wildcard::None),
+            create_dpk_xpub(None, xpub_path_str, dummy::xpub(), Wildcard::None).1,
             DescriptorPublicKey::from_template(
                 &template_of(dpk_xpub1.clone()),
                 &mut 0,
@@ -1795,13 +1705,13 @@ mod tests {
         );
 
         // XPub, With Origin, different derivation path, UnhardenedWildcard
-        let dpk_xpub2 = create_dpk_xpub(
+        let (_, dpk_xpub2) = create_dpk_xpub(
             Some((origin_fp, origin_path.clone())),
             "m/1",
             xpub,
             Wildcard::Unhardened,
         );
-        let expected_dpk_xpub2 = create_dpk_xpub(
+        let (_, expected_dpk_xpub2) = create_dpk_xpub(
             Some((dummy::fp(), origin_path.clone())),
             "m/1",
             dummy::xpub(),
@@ -1832,7 +1742,7 @@ mod tests {
 
         // MultiXPub, No Origin, specific derivation paths, HardenedWildcard
         let multixpub_paths_str = ["m/0/0", "m/0/1"];
-        let dpk_multixpub1 =
+        let (_, dpk_multixpub1) =
             create_dpk_multixpub(None, &multixpub_paths_str, xpub, Wildcard::Hardened);
         assert_eq!(
             create_dpk_multixpub(
@@ -1840,7 +1750,8 @@ mod tests {
                 &multixpub_paths_str,
                 dummy::xpub(),
                 Wildcard::Hardened
-            ),
+            )
+            .1,
             DescriptorPublicKey::from_template(
                 &template_of(dpk_multixpub1.clone()),
                 &mut 0,
@@ -1864,35 +1775,248 @@ mod tests {
     }
 
     #[test]
+    fn test_descriptor_secret_key() {
+        let secp = Secp256k1::new();
+
+        // Single Key Compressed, No Origin
+        let (_, dsk1) = create_dsk_single(true, None, 2);
+        assert_eq!(
+            create_dpk_single_full(true, None, 1).1,
+            DescriptorPublicKey::from_template(
+                &template_of(dsk1.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
+        );
+        let dpk1 = dsk1.to_public(&secp).unwrap();
+        let mut km = KeyMap::new();
+        assert_eq!(
+            dpk1.clone(),
+            DescriptorPublicKey::from_template(
+                &template_of(dsk1.clone()),
+                &mut 0,
+                &payload_of(dsk1.clone()),
+                &mut 0,
+                &mut km
+            )
+            .unwrap()
+        );
+        assert_eq!(&dsk1.clone(), km.get(&dpk1).unwrap());
+
+        // Single Key Uncompressed, No Origin
+        let (_, dsk2) = create_dsk_single(false, None, 2);
+        assert_eq!(
+            create_dpk_single_full(false, None, 1).1,
+            DescriptorPublicKey::from_template(
+                &template_of(dsk2.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
+        );
+        let dpk2 = dsk2.to_public(&secp).unwrap();
+        let mut km = KeyMap::new();
+        assert_eq!(
+            dpk2.clone(),
+            DescriptorPublicKey::from_template(
+                &template_of(dsk2.clone()),
+                &mut 0,
+                &payload_of(dsk2.clone()),
+                &mut 0,
+                &mut km
+            )
+            .unwrap()
+        );
+        assert_eq!(&dsk2.clone(), km.get(&dpk2).unwrap());
+
+        // Single Key Compressed, With Origin
+        let origin_fp = fp_from_str("12345678");
+        let origin_path = dp_from_str("m/84h/0h/0h");
+        let (_, dsk3) = create_dsk_single(true, Some((origin_fp, origin_path.clone())), 3);
+        assert_eq!(
+            create_dpk_single_full(true, Some((dummy::fp(), origin_path.clone())), 1).1,
+            DescriptorPublicKey::from_template(
+                &template_of(dsk3.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
+        );
+        let dpk3 = dsk3.to_public(&secp).unwrap();
+        let mut km = KeyMap::new();
+        assert_eq!(
+            dpk3.clone(),
+            DescriptorPublicKey::from_template(
+                &template_of(dsk3.clone()),
+                &mut 0,
+                &payload_of(dsk3.clone()),
+                &mut 0,
+                &mut km
+            )
+            .unwrap()
+        );
+        assert_eq!(&dsk3.clone(), km.get(&dpk3).unwrap());
+
+        // XPriv, No Origin, specific derivation path, NoWildcard
+        let xpriv_path_str = "m/0/0";
+        let xpriv = Xpriv::new_master(NetworkKind::Main, &[1u8; 32]).unwrap();
+        let (_, dsk_xpriv1) = create_dsk_xpriv(None, xpriv_path_str, xpriv, Wildcard::None);
+        assert_eq!(
+            create_dpk_xpub(None, xpriv_path_str, dummy::xpub(), Wildcard::None).1,
+            DescriptorPublicKey::from_template(
+                &template_of(dsk_xpriv1.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
+        );
+        let dpk_xpub1 = dsk_xpriv1.to_public(&secp).unwrap();
+        let mut km = KeyMap::new();
+        assert_eq!(
+            dpk_xpub1.clone(),
+            DescriptorPublicKey::from_template(
+                &template_of(dsk_xpriv1.clone()),
+                &mut 0,
+                &payload_of(dsk_xpriv1.clone()),
+                &mut 0,
+                &mut km
+            )
+            .unwrap()
+        );
+        assert_eq!(&dsk_xpriv1.clone(), km.get(&dpk_xpub1).unwrap());
+
+        // XPub, With Origin, different derivation path, UnhardenedWildcard
+        let (_, dsk_xpriv2) = create_dsk_xpriv(
+            Some((origin_fp, origin_path.clone())),
+            "m/1",
+            xpriv,
+            Wildcard::Unhardened,
+        );
+        assert_eq!(
+            create_dpk_xpub(
+                Some((dummy::fp(), origin_path.clone())),
+                "m/1",
+                dummy::xpub(),
+                Wildcard::Unhardened
+            )
+            .1,
+            DescriptorPublicKey::from_template(
+                &template_of(dsk_xpriv2.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
+        );
+        let dpk_xpub2 = dsk_xpriv2.to_public(&secp).unwrap();
+        let mut km = KeyMap::new();
+        assert_eq!(
+            dpk_xpub2.clone(),
+            DescriptorPublicKey::from_template(
+                &template_of(dsk_xpriv2.clone()),
+                &mut 0,
+                &payload_of(dsk_xpriv2.clone()),
+                &mut 0,
+                &mut km
+            )
+            .unwrap()
+        );
+        assert_eq!(&dsk_xpriv2.clone(), km.get(&dpk_xpub2).unwrap());
+
+        // MultiXPub, No Origin, specific derivation paths, HardenedWildcard
+        let multixpriv_paths_str = ["m/0/0", "m/0/1"];
+        let (_, dsk_multixpriv1) =
+            create_dsk_multixpriv(None, &multixpriv_paths_str, xpriv, Wildcard::Hardened);
+        assert_eq!(
+            create_dpk_single_compressed_no_origin(1),
+            DescriptorPublicKey::from_template(
+                &template_of(dsk_multixpriv1.clone()),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
+        );
+        let dpk_multixpub1 = create_dpk_single_compressed_no_origin(2);
+        assert_eq!(
+            dpk_multixpub1.clone(),
+            DescriptorPublicKey::from_template(
+                &template_of(dsk_multixpriv1.clone()),
+                &mut 0,
+                &payload_of(dsk_multixpriv1.clone()),
+                &mut 0,
+                &mut km
+            )
+            .unwrap()
+        );
+        assert_eq!(&dsk_multixpriv1.clone(), km.get(&dpk_multixpub1).unwrap());
+    }
+
+    #[test]
     fn test_miniscript_terminals() {
         let pk = create_dpk_single_compressed_no_origin(1);
 
         let ms_true = MsSw0::TRUE;
         assert_eq!(
             ms_true.clone(),
-            MsSw0::from_template(&template_of(ms_true), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_true),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let ms_false = MsSw0::FALSE;
         assert_eq!(
             ms_false.clone(),
-            MsSw0::from_template(&template_of(ms_false), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_false),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let ms_pkk = MsSw0::from_ast(TerminalSw0::PkK(pk.clone())).unwrap();
         assert_eq!(
             ms_pkk.clone(),
-            MsSw0::from_template(&template_of(ms_pkk), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_pkk),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let ms_pkh = MsSw0::from_ast(TerminalSw0::PkH(pk.clone())).unwrap();
         assert_eq!(
             ms_pkh.clone(),
-            MsSw0::from_template(&template_of(ms_pkh), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_pkh),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         // Terminals with ignored values
@@ -2143,8 +2267,14 @@ mod tests {
         let ms_alt = MsSw0::from_ast(TerminalSw0::Alt(ms_true.clone())).unwrap();
         assert_eq!(
             ms_alt.clone(),
-            MsSw0::from_template(&template_of(ms_alt), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_alt),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let ms_swap = MsSw0::from_ast(TerminalSw0::Swap(ms_hash160.clone())).unwrap();
@@ -2163,8 +2293,14 @@ mod tests {
         let ms_check = MsSw0::from_ast(TerminalSw0::Check(ms_pk_k.clone())).unwrap();
         assert_eq!(
             ms_check.clone(),
-            MsSw0::from_template(&template_of(ms_check), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_check),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let ms_verify = MsSw0::from_ast(TerminalSw0::Verify(ms_true.clone())).unwrap();
@@ -2183,15 +2319,27 @@ mod tests {
         let ms_dupif = MsSw0::from_ast(TerminalSw0::DupIf(ms_verify.clone().into())).unwrap();
         assert_eq!(
             ms_dupif.clone(),
-            MsSw0::from_template(&template_of(ms_dupif), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_dupif),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let ms_zerone = MsSw0::from_ast(TerminalSw0::ZeroNotEqual(ms_true.clone())).unwrap();
         assert_eq!(
             ms_zerone.clone(),
-            MsSw0::from_template(&template_of(ms_zerone), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_zerone),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         // Binary
@@ -2199,46 +2347,82 @@ mod tests {
             MsSw0::from_ast(TerminalSw0::AndV(ms_verify.clone().into(), ms_true.clone())).unwrap();
         assert_eq!(
             ms_andv.clone(),
-            MsSw0::from_template(&template_of(ms_andv), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_andv),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let ms_andb =
             MsSw0::from_ast(TerminalSw0::AndB(ms_true.clone(), ms_swap.clone().into())).unwrap();
         assert_eq!(
             ms_andb.clone(),
-            MsSw0::from_template(&template_of(ms_andb), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_andb),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let ms_orb =
             MsSw0::from_ast(TerminalSw0::OrB(ms_false.clone(), ms_swap.clone().into())).unwrap();
         assert_eq!(
             ms_orb.clone(),
-            MsSw0::from_template(&template_of(ms_orb), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_orb),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let ms_orc =
             MsSw0::from_ast(TerminalSw0::OrC(ms_false.clone(), ms_verify.clone().into())).unwrap();
         assert_eq!(
             ms_orc.clone(),
-            MsSw0::from_template(&template_of(ms_orc), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_orc),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let ms_ord = MsSw0::from_ast(TerminalSw0::OrD(ms_false.clone(), ms_true.clone())).unwrap();
         assert_eq!(
             ms_ord.clone(),
-            MsSw0::from_template(&template_of(ms_ord), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_ord),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let ms_ori = MsSw0::from_ast(TerminalSw0::OrI(ms_true.clone(), ms_false.clone())).unwrap();
         assert_eq!(
             ms_ori.clone(),
-            MsSw0::from_template(&template_of(ms_ori), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_ori),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         // Ternary
@@ -2250,8 +2434,14 @@ mod tests {
         .unwrap();
         assert_eq!(
             ms_andor.clone(),
-            MsSw0::from_template(&template_of(ms_andor), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(ms_andor),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         let k = 1;
@@ -2264,8 +2454,14 @@ mod tests {
         .unwrap();
         assert_eq!(
             thresh.clone(),
-            MsSw0::from_template(&template_of(thresh), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            MsSw0::from_template(
+                &template_of(thresh),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
     }
 
@@ -2297,8 +2493,8 @@ mod tests {
 
     #[test]
     fn test_taptree() {
-        let pk1 = create_dpk_xonly_no_origin(1);
-        let pk2 = create_dpk_xonly_no_origin(2);
+        let pk1 = create_dpk_xonly_no_origin(1).1;
+        let pk2 = create_dpk_xonly_no_origin(2).1;
         let ms_leaf1 = Arc::new(MsTap::from_ast(TerminalTap::PkK(pk1.clone())).unwrap());
         let ms_leaf2 = Arc::new(MsTap::from_ast(TerminalTap::PkK(pk2.clone())).unwrap());
 
@@ -2330,8 +2526,14 @@ mod tests {
         };
         assert_eq!(
             expected_tap_tree.clone(),
-            TapTree::from_template(&template_of(tap_tree), &mut 0, &[], &mut 0, &mut KeyMap::new())
-                .unwrap()
+            TapTree::from_template(
+                &template_of(tap_tree),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
     }
 
@@ -2345,7 +2547,8 @@ mod tests {
         let bare = Bare::new(ms_bare_check_pkk.clone()).unwrap();
         assert_eq!(
             bare.clone(),
-            Bare::from_template(&template_of(bare), &mut 0, &[], &mut 0, &mut KeyMap::new()).unwrap()
+            Bare::from_template(&template_of(bare), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
 
         // Pkh
@@ -2359,7 +2562,8 @@ mod tests {
         let wpkh = Wpkh::new(pk_full.clone()).unwrap();
         assert_eq!(
             wpkh.clone(),
-            Wpkh::from_template(&template_of(wpkh), &mut 0, &[], &mut 0, &mut KeyMap::new()).unwrap()
+            Wpkh::from_template(&template_of(wpkh), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
     }
 
@@ -2373,7 +2577,14 @@ mod tests {
         let sh_wpkh = Sh::new_with_wpkh(wpkh_inner.clone());
         assert_eq!(
             sh_wpkh.clone(),
-            Sh::from_template(&template_of(sh_wpkh), &mut 0, &[], &mut 0, &mut KeyMap::new()).unwrap()
+            Sh::from_template(
+                &template_of(sh_wpkh),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         // Sh(Wsh)
@@ -2382,7 +2593,14 @@ mod tests {
         let sh_wsh = Sh::new_with_wsh(wsh.clone());
         assert_eq!(
             sh_wsh.clone(),
-            Sh::from_template(&template_of(sh_wsh), &mut 0, &[], &mut 0, &mut KeyMap::new()).unwrap()
+            Sh::from_template(
+                &template_of(sh_wsh),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
 
         // Sh(SortedMulti)
@@ -2407,7 +2625,8 @@ mod tests {
         let sh_ms = Sh::new(ms_sh.clone()).unwrap();
         assert_eq!(
             sh_ms.clone(),
-            Sh::from_template(&template_of(sh_ms), &mut 0, &[], &mut 0, &mut KeyMap::new()).unwrap()
+            Sh::from_template(&template_of(sh_ms), &mut 0, &[], &mut 0, &mut KeyMap::new())
+                .unwrap()
         );
     }
 
@@ -2438,13 +2657,20 @@ mod tests {
         let wsh_ms = Wsh::new(ms_wsh.clone()).unwrap();
         assert_eq!(
             wsh_ms.clone(),
-            Wsh::from_template(&template_of(wsh_ms), &mut 0, &[], &mut 0, &mut KeyMap::new()).unwrap()
+            Wsh::from_template(
+                &template_of(wsh_ms),
+                &mut 0,
+                &[],
+                &mut 0,
+                &mut KeyMap::new()
+            )
+            .unwrap()
         );
     }
 
     #[test]
     fn test_tr() {
-        let internal_key = create_dpk_xonly_no_origin(1);
+        let internal_key = create_dpk_xonly_no_origin(1).1;
 
         // Tr with no TapTree
         let tr_no_tree = Tr::new(internal_key.clone(), None).unwrap();
@@ -2640,7 +2866,10 @@ mod tests {
         let expected_size = input.len();
         input.extend(vec![0, 1, 2, 3]);
 
-        assert_eq!(decode_template(&input), Ok((descriptor, KeyMap::new(), expected_size)));
+        assert_eq!(
+            decode_template(&input),
+            Ok((descriptor, KeyMap::new(), expected_size))
+        );
     }
 
     #[test]
@@ -2652,6 +2881,9 @@ mod tests {
         let input = template_of(descriptor.clone());
         let payload = payload_of(descriptor.clone());
 
-        assert_eq!(decode_with_payload(&input, &payload), Ok((descriptor, KeyMap::new())));
+        assert_eq!(
+            decode_with_payload(&input, &payload),
+            Ok((descriptor, KeyMap::new()))
+        );
     }
 }

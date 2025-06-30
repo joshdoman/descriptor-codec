@@ -55,6 +55,7 @@ pub mod decode;
 mod dummy;
 pub mod encode;
 mod tag;
+mod test_helpers;
 mod varint;
 
 pub use decode::Error;
