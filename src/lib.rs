@@ -45,7 +45,7 @@
 #![deny(non_camel_case_types)]
 #![deny(non_snake_case)]
 #![deny(unused_mut)]
-// #![deny(dead_code)]
+#![deny(dead_code)]
 #![deny(unused_imports)]
 #![deny(missing_docs)]
 
@@ -60,16 +60,19 @@ mod varint;
 
 pub use decode::Error;
 
-use miniscript::{Descriptor, DescriptorPublicKey, descriptor::KeyMap};
+use bitcoin::secp256k1::Secp256k1;
+use miniscript::{Descriptor, DescriptorPublicKey};
 
-/// Encodes a Bitcoin wallet descriptor
-pub fn encode(descriptor: Descriptor<DescriptorPublicKey>) -> Vec<u8> {
-    let (mut template, mut payload) = encode::encode(descriptor, &KeyMap::new());
+/// Parses and encodes a Bitcoin descriptor
+pub fn encode(s: &str) -> Result<Vec<u8>, miniscript::Error> {
+    let secp = Secp256k1::new();
+    let (descriptor, key_map) = Descriptor::parse_descriptor(&secp, s)?;
+    let (mut template, mut payload) = encode::encode(descriptor, &key_map);
     template.append(&mut payload);
-    template
+    Ok(template)
 }
 
-/// Decodes a Bitcoin wallet descriptor from bytes
+/// Decodes a Bitcoin descriptor from bytes
 pub fn decode(bytes: &[u8]) -> Result<Descriptor<DescriptorPublicKey>, Error> {
     let (_, size) = decode::decode_template(bytes)?;
     decode::decode_with_payload(&bytes[..size], &bytes[size..])
