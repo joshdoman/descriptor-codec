@@ -54,6 +54,85 @@ The executable will be located at `./target/release/descriptor-codec`.
     **Arguments**:
     *   `<DATA>`: Hex-encoded descriptor data.
 
+## Algorithm
+
+The encoder splits the descriptor into two parts that are concatenated: a structural **template** and a data **payload**.
+
+### Template and Payload
+
+The encoding separates the descriptor's structure from its raw data.
+
+*   **Template**: This part defines the logical structure of the descriptor. It is a sequence of single-byte **Tags** that represent script components (like `wsh`, `pk`, `older`) and structural information. It also contains variable-length encoded integers for derivation paths and multisig `k`/`n` parameters.
+*   **Payload**: This part contains the raw data values from the descriptor, concatenated in the order they are referenced by the template. This includes items like public keys, private keys, key fingerprints, hashes, and timelock values.
+
+When decoding, the template is read first to understand the structure, which then dictates how to parse the subsequent payload data.
+
+### Variable-Length Encoding
+
+To save space, unsigned integers are encoded as variable-length LEB128 integers. This is used for:
+*   Absolute and relative timelocks (`after`, `older`).
+*   The `k` (threshold) and `n` (total keys) values in multisig (`multi`, `sortedmulti`) and threshold (`thresh`) scripts.
+*   The length of derivation paths and the individual child numbers within them.
+*   Hardened child numbers are encoded as $2*c+1$, where $c$ is the child number. Unhardened child numbers 
+are encoded as $2*c$.
+
+### Tags
+
+Each component of a descriptor is represented by a single-byte tag.
+
+| Tag Name | Hex Value | Description |
+| :--- | :--- | :--- |
+| `False` | $0x00$ | Represents a script that always fails. |
+| `True` | $0x01$ | Represents a script that always succeeds. |
+| `Pkh` | $0x02$ | Top-level Pay-to-Public-Key-Hash descriptor. |
+| `Sh` | $0x03$ | Top-level Pay-to-Script-Hash descriptor. |
+| `Wpkh` | $0x04$ | Top-level Witness-Pay-to-Public-Key-Hash descriptor. |
+| `Wsh` | $0x05$ | Top-level Witness-Pay-to-Script-Hash descriptor. |
+| `Tr` | $0x06$ | Top-level Pay-to-Taproot descriptor. |
+| `Bare` | $0x07$ | Top-level Bare Script descriptor. |
+| `TapTree` | $0x08$ | A Taproot script path tree or leaf. |
+| `SortedMulti`| $0x09$ | A sorted multisig script. |
+| `Alt` | $0x0A$ | Miniscript `alt` operator. |
+| `Swap` | $0x0B$ | Miniscript `swap` operator. |
+| `Check` | $0x0C$ | Miniscript `check` operator. |
+| `DupIf` | $0x0D$ | Miniscript `dupif` operator. |
+| `Verify` | $0x0E$ | Miniscript `verify` operator. |
+| `NonZero` | $0x0F$ | Miniscript `nonzero` operator. |
+| `ZeroNotEqual`| $0x10$ | Miniscript `zeronotequal` operator. |
+| `AndV` | $0x11$ | Miniscript `and_v` operator. |
+| `AndB` | $0x12$ | Miniscript `and_b` operator. |
+| `AndOr` | $0x13$ | Miniscript `andor` operator. |
+| `OrB` | $0x14$ | Miniscript `or_b` operator. |
+| `OrC` | $0x15$ | Miniscript `or_c` operator. |
+| `OrD` | $0x16$ | Miniscript `or_d` operator. |
+| `OrI` | $0x17$ | Miniscript `or_i` operator. |
+| `Thresh` | $0x18$ | Miniscript `thresh` operator. |
+| `Multi` | $0x19$ | Miniscript `multi` operator. |
+| `MultiA` | $0x1A$ | Miniscript `multi_a` operator. |
+| `PkK` | $0x1B$ | Miniscript `pk_k` (CHECKSIG). |
+| `PkH` | $0x1C$ | Miniscript `pk_h` (CHECKSIG from hash). |
+| `RawPkH` | $0x1D$ | Miniscript `raw_pkh` (raw public key hash). |
+| `After` | $0x1E$ | Miniscript absolute timelock (`after`). |
+| `Older` | $0x1F$ | Miniscript relative timelock (`older`). |
+| `Sha256` | $0x20$ | A SHA256 hash. |
+| `Hash256` | $0x21$ | A double-SHA256 hash. |
+| `Ripemd160` | $0x22$ | A RIPEMD-160 hash. |
+| `Hash160` | $0x23$ | A HASH160 (SHA256 then RIPEMD-160) hash. |
+| `Origin` | $0x24$ | Indicates a key has an origin (fingerprint + path). |
+| `NoOrigin` | $0x25$ | Indicates a key has no origin. |
+| `UncompressedFullKey` | $0x26$ | An uncompressed public key. |
+| `CompressedFullKey` | $0x27$ | A compressed public key. |
+| `XOnly` | $0x28$ | An x-only (Taproot) public key. |
+| `XPub` | $0x29$ | An extended public key (`xpub`). |
+| `MultiXPub` | $0x2A$ | An `xpub` with multiple derivation paths. |
+| `UncompressedSinglePriv`| $0x2B$ | An uncompressed private key. |
+| `CompressedSinglePriv` | $0x2C$ | A compressed private key. |
+| `XPriv` | $0x2D$ | An extended private key (`xprv`). |
+| `MultiXPriv` | $0x2E$ | An `xprv` with multiple derivation paths. |
+| `NoWildcard`| $0x2F$ | No wildcard `/*` in a derivation path. |
+| `UnhardenedWildcard` | $0x30$ | Unhardened wildcard `/*` in a derivation path. |
+| `HardenedWildcard` | $0x31$ | Hardened wildcard `/*h` in a derivation path. |
+
 ## Use Cases
 
 - Sharing complex multisig configurations via QR codes
