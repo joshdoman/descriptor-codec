@@ -95,7 +95,7 @@ pub fn decode(bytes: &[u8]) -> Result<String, Error> {
 ///
 /// Re-implements `parse_descriptor` from `miniscript/descriptor` to handle MultiXPrivs by replacing
 /// each MultiXPriv with an indexed dummy SinglePub and adding the MultiXpriv to the key map.
-pub fn parse_descriptor<C: secp256k1::Signing>(
+fn parse_descriptor<C: secp256k1::Signing>(
     secp: &secp256k1::Secp256k1<C>,
     s: &str,
 ) -> Result<(Descriptor<DescriptorPublicKey>, KeyMap), miniscript::Error> {

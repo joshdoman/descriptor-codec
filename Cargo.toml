@@ -1,6 +1,6 @@
 [package]
 name = "descriptor-codec"
-version = "0.1.0"
+version = "0.1.1"
 description = "Encode and decode Bitcoin wallet descriptors with a 30-40% size reduction"
 keywords = [ "bitcoin", "descriptor", "miniscript", "codec", "encode" ]
 authors = ["Joshua Doman <joshsdoman@gmail.com>"]
