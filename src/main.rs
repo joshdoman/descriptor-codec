@@ -5,8 +5,6 @@
 use anyhow::{Context, Result};
 #[cfg(feature = "cli")]
 use clap::{Args, Parser, Subcommand};
-#[cfg(feature = "cli")]
-use descriptor_codec;
 
 #[cfg(feature = "cli")]
 #[derive(Parser)]

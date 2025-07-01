@@ -2,31 +2,31 @@ name: CI
 
 on:
   push:
-    branches: main
+    branches: [main]
   pull_request:
-    branches: main
+    branches: [main]
 
 env:
   RUSTFLAGS: --deny warnings
 
 jobs:
   lint:
-      runs-on: ubuntu-latest
-
-      steps:
+    runs-on: ubuntu-latest
+    steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust Toolchain Components
-        uses: actions-rs/toolchain@v1
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-          override: true
-          toolchain: stable
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Clippy
-        run: cargo clippy --all --all-targets
+      - name: Clippy (default features)
+        run: cargo clippy --all-targets
+
+      - name: Clippy (all features)
+        run: cargo clippy --all-targets --all-features
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -38,38 +38,31 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macOS-latest]
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - os: macOS-latest
-            target: x86_64-apple-darwin
 
     steps:
-      - uses: actions/checkout@v3
-      
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
-      
-      - name: Cache dependencies
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-      
-      - name: Run cargo test
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test default features
+        run: cargo test
+
+      - name: Test all features
+        run: cargo test --all-features
+
+      - name: Test library only
+        run: cargo test --no-default-features --features std
+
+      - name: Build CLI
+        run: cargo build --release --features cli
+
+      - name: Test CLI binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          echo 'wpkh(02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9)' > test.desc
+          ./target/release/descriptor-codec encode "$(cat test.desc)" > encoded.hex
+          ./target/release/descriptor-codec decode "$(cat encoded.hex)" > decoded.desc
+          diff test.desc decoded.desc
