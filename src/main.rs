@@ -52,10 +52,15 @@ fn main() -> Result<()> {
     }
 }
 
+#[cfg(not(feature = "cli"))]
+fn main() {
+    println!("Feature --cli is not enabled");
+}
+
 #[cfg(feature = "cli")]
 fn handle_encode(args: EncodeArgs) -> Result<()> {
-    let encoded_data = descriptor_codec::encode(&args.descriptor)
-        .context("Failed to parse descriptor string")?;
+    let encoded_data =
+        descriptor_codec::encode(&args.descriptor).context("Failed to parse descriptor string")?;
 
     println!("{}", hex::encode(encoded_data));
 
