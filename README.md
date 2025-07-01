@@ -82,8 +82,8 @@ Each component of a descriptor is represented by a single-byte tag.
 
 | Tag Name | Hex Value | Description |
 | :--- | :--- | :--- |
-| `False` | $0x00$ | Represents a script that always fails. |
-| `True` | $0x01$ | Represents a script that always succeeds. |
+| `False` | $0x00$ | Miniscript `false` operator. |
+| `True` | $0x01$ | Miniscript `true` operator. |
 | `Pkh` | $0x02$ | Top-level Pay-to-Public-Key-Hash descriptor. |
 | `Sh` | $0x03$ | Top-level Pay-to-Script-Hash descriptor. |
 | `Wpkh` | $0x04$ | Top-level Witness-Pay-to-Public-Key-Hash descriptor. |
