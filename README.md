@@ -1,6 +1,6 @@
 # descriptor-codec
 
-Efficiently encode and decode Bitcoin wallet descriptors with 30-40% size reduction.
+Efficiently encode and decode Bitcoin wallet descriptors with a 30-40% size reduction.
 
 ## Features
 

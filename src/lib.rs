@@ -3,7 +3,7 @@
 
 //! # Descriptor Codec
 //!
-//! A library to efficiently encode and decode Bitcoin wallet descriptors.
+//! Efficiently encode and decode Bitcoin wallet descriptors with a 30-40% size reduction.
 //!
 //! ## Overview
 //!
