@@ -4,7 +4,7 @@ Efficiently encode and decode Bitcoin wallet descriptors with a 30-40% size redu
 
 ## Features
 
-- **Compact Encoding**: Tag-based and variable-length encoding reduces descriptor size by 30-40%
+- **Compact Encoding**: Tag-based and variable-length encoding and the avoidance of bech32 and base58 reduces descriptor size by 30-40%
 - **Complete Coverage**: Supports all descriptor types including complex miniscript and private keys
 - **QR Code Friendly**: Smaller encodings improve QR code reliability and scanning
 - **NFC Compatible**: Fits descriptors within NFC byte limits for hardware wallet communication
@@ -73,8 +73,8 @@ To save space, unsigned integers are encoded as variable-length LEB128 integers.
 *   Absolute and relative timelocks (`after`, `older`).
 *   The `k` (threshold) and `n` (total keys) values in multisig (`multi`, `sortedmulti`) and threshold (`thresh`) scripts.
 *   The length of derivation paths and the individual child numbers within them.
-*   Hardened child numbers are encoded as $2 \cdot c+1$, where $c$ is the child number. Unhardened child numbers 
-are encoded as $2 \cdot c$.
+*   Hardened child numbers are encoded as $2c+1$, where $c$ is the child number. Unhardened child numbers 
+are encoded as $2c$.
 
 ### Tags
 
