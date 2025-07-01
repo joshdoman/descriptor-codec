@@ -71,7 +71,7 @@ fn handle_decode(args: DecodeArgs) -> Result<()> {
 
     let desc = descriptor_codec::decode(&data).context("Unable to decode")?;
 
-    println!("{}", desc);
+    println!("{desc}");
 
     Ok(())
 }
