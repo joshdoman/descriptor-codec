@@ -5,7 +5,7 @@ Efficiently encode and decode Bitcoin wallet descriptors with a 30-40% size redu
 ## Features
 
 - **Compact Encoding**: Tag-based and variable-length encoding and the avoidance of bech32 and base58 reduces descriptor size by 30-40%
-- **Complete Coverage**: Supports all descriptor types including complex miniscript and private keys
+- **Complete Coverage**: Supports all descriptors including those with complex miniscript and private keys
 - **QR Code Friendly**: Smaller encodings improve QR code reliability and scanning
 - **NFC Compatible**: Fits descriptors within NFC byte limits for hardware wallet communication
 
