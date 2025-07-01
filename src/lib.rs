@@ -13,7 +13,7 @@
 //! of machine-to-machine communication.
 //!
 //! This library efficiently encodes descriptors using tag-based and variable-length encoding,
-//! reducing the number of bytes by 30-40%. It supports all descriptors, including those with 
+//! reducing the number of bytes by 30-40%. It supports all descriptors, including those with
 //! private keys.
 //!
 //! ## Usage
