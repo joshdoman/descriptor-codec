@@ -62,7 +62,7 @@ jobs:
       - name: Test CLI binary (Unix)
         if: runner.os != 'Windows'
         run: |
-          echo 'wpkh(02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9)' > test.desc
+          echo 'wpkh(02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9)#8zl0zxma' > test.desc
           ./target/release/descriptor-codec encode "$(cat test.desc)" > encoded.hex
           ./target/release/descriptor-codec decode "$(cat encoded.hex)" > decoded.desc
           diff test.desc decoded.desc
