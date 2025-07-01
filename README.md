@@ -73,8 +73,8 @@ To save space, unsigned integers are encoded as variable-length LEB128 integers.
 *   Absolute and relative timelocks (`after`, `older`).
 *   The `k` (threshold) and `n` (total keys) values in multisig (`multi`, `sortedmulti`) and threshold (`thresh`) scripts.
 *   The length of derivation paths and the individual child numbers within them.
-*   Hardened child numbers are encoded as $2*c+1$, where $c$ is the child number. Unhardened child numbers 
-are encoded as $2*c$.
+*   Hardened child numbers are encoded as $2 \cdot c+1$, where $c$ is the child number. Unhardened child numbers 
+are encoded as $2 \cdot c$.
 
 ### Tags
 
