@@ -1,6 +1,6 @@
 use crate::dummy;
 #[cfg(test)]
-use crate::encode::EncodeTemplate;
+use crate::encoder::EncodeTemplate;
 use bitcoin::PublicKey;
 #[cfg(test)]
 use bitcoin::{

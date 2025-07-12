@@ -51,14 +51,14 @@
 #[cfg(not(any(feature = "std")))]
 compile_error!("`std` must be enabled");
 
-pub mod decode;
+pub mod decoder;
 mod dummy;
-pub mod encode;
+pub mod encoder;
 mod tag;
 mod test_helpers;
 mod varint;
 
-pub use decode::Error;
+pub use decoder::Error;
 
 use bitcoin::{
     hashes::{hash160, ripemd160, sha256},
@@ -76,15 +76,15 @@ use std::str::FromStr;
 pub fn encode(s: &str) -> Result<Vec<u8>, miniscript::Error> {
     let secp = secp256k1::Secp256k1::new();
     let (descriptor, key_map) = parse_descriptor(&secp, s)?;
-    let (mut template, mut payload) = encode::encode(descriptor, &key_map);
+    let (mut template, mut payload) = encoder::encode(descriptor, &key_map);
     template.append(&mut payload);
     Ok(template)
 }
 
 /// Decodes a Bitcoin descriptor
 pub fn decode(bytes: &[u8]) -> Result<String, Error> {
-    let (_, _, size) = decode::decode_template(bytes)?;
-    let (descriptor, key_map) = decode::decode_with_payload(&bytes[..size], &bytes[size..])?;
+    let (_, _, size) = decoder::decode_template(bytes)?;
+    let (descriptor, key_map) = decoder::decode_with_payload(&bytes[..size], &bytes[size..])?;
     Ok(descriptor.to_string_with_secret(&key_map))
 }
 
